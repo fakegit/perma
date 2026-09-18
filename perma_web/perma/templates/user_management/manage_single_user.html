@@ -4,15 +4,24 @@
 {% block dashboardContent %}
   {% if this_page == 'users_sponsored_users' and sponsorships %}
     <div class="orgs-list-container">
-      <h3 class="body-bh">Edit {{ target_user.email }}'s sponsorship{{ sponsorships|length|pluralize }}</h3>
+      <h3 class="body-bh">Edit {{ target_user.raw_email }}'s sponsorship{{ sponsorships|length|pluralize }}</h3>
       {% regroup sponsorships by status as sponsorships_list %}
       {% for status in sponsorships_list %}
         <h4 class="body-ch">{{ status.grouper|title }}</h4>
         {% for sponsorship in status.list %}
           <div class="settings-block">
             <p>{{ sponsorship.registrar.name }}</p>
-            {% if sponsorship.status == 'active' %}
+            {% if sponsorship.status == 'active' %}<br>
+              <p>
+                {% if sponsorship.expires_at %}
+                Expiration:
+                  {{ sponsorship.expires_at }}
+                {% else %}
+                  Permanent affiliation
+                {% endif %}
+              </p>
               <a href="{% url 'user_management_manage_single_sponsored_user_remove' user_id=target_user.id registrar_id=sponsorship.registrar.id %}" class="btn cancel btn-xs leave-org-btn">Deactivate sponsorship</a>
+              <a href="{% url 'user_management_manage_single_sponsored_user_expiration_date' user_id=target_user.id registrar_id=sponsorship.registrar.id %}" class="btn btn-xs update-affiliation-btn">Update sponsorship</a>
             {% else %}
               <a href="{% url 'user_management_manage_single_sponsored_user_readd' user_id=target_user.id registrar_id=sponsorship.registrar.id %}" name="registrar" class="btn btn-default btn-xs leave-org-btn">Reactivate</a>
             {% endif %}
@@ -20,29 +29,37 @@
         {% endfor %}
       {% endfor %}
     </div>
-  {% elif this_page == 'users_organization_users' and orgs %}
+  {% elif this_page == 'users_organization_users' and affiliations %}
     <div class="orgs-list-container">
-      <h3 class="body-bh">Remove from organization</h3>
-      <p class="page-dek"><strong>{{ target_user.email }}</strong> is a member of the following organization{{ orgs|pluralize }}:</p>
-      <form action="{% url 'user_management_manage_single_organization_user_remove' user_id=target_user.id %}" method="POST">
-        {% csrf_token %}
-        {% for org in orgs %}
-          <div class="settings-block">
-            <p>{{ org.name }}</p>
-            <button name="org" value="{{ org.id }}" class="btn btn-default btn-xs leave-org-btn" data-toggle="tooltip">Remove</button>
-          </div>
-        {% endfor %}
-      </form>
+      <h3 class="body-bh">Edit organization affiliation</h3>
+      <p class="page-dek"><strong>{{ target_user.raw_email }}</strong> is a member of the following organization{{ affiliations|pluralize }}:</p>
+      {% for aff in affiliations %}
+        <div class="settings-block org-user-actions">
+          <p>{{ aff.organization.name }}</p><br>
+          <p>
+          {% if aff.expires_at %}
+            Expiration: {{ aff.expires_at }}
+          {% else %}
+            Permanent affiliation
+          {% endif %}
+          </p>
+          <form action="{% url 'user_management_manage_single_organization_user_remove' user_id=target_user.id %}" method="POST">
+            {% csrf_token %}
+            <button name="affiliation" value="{{ aff.id }}" class="btn btn-default btn-xs leave-org-btn" data-toggle="tooltip">Remove</button>
+          </form>
+          <a href="{% url 'user_management_manage_single_organization_user_expiration_date' user_id=target_user.id organization_id=aff.organization_id %}" class="btn btn-xs modify-org-exp-btn">Update</a>
+        </div>
+      {% endfor %}
     </div>
   {% endif %}
-  {% if request.user.is_staff %}
+  {% if user_management_perms.can_delete_or_deactivate %}
     <h3 class="body-bh">{% if target_user.is_confirmed %}Deactivate{% else %}Delete{% endif %}</h3>
     <a href="{% url delete_user_url target_user.id %}">
-      <p class="page-dek"><strong>{{ target_user.email}}</strong>'s account was created on {{ target_user.date_joined}}{% if target_user.last_login%} Last login occurred on {{ target_user.last_login}}{% else %}They have never logged in.{% endif %}</p>
+      <p class="page-dek"><strong>{{ target_user.raw_email}}</strong>'s account was created on {{ target_user.date_joined}}{% if target_user.last_login%}. Last login occurred on {{ target_user.last_login}}{% else %}. They have never logged in.{% endif %}</p>
       <span class="field-error">
         <i class="icon-trash"></i>
 
-        {% if target_user.is_confirmed %}Deactivate{% else %}Delete{% endif %} {{ target_user.email}}
+        {% if target_user.is_confirmed %}Deactivate{% else %}Delete{% endif %} {{ target_user.raw_email}}
       </span>
     </a>
   {% endif %}

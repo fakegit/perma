@@ -2,6 +2,8 @@
 
 //	Global imports
 
+@use "sass:math";
+
 @import "bootstrap-custom";
 @import "bootstrap-mod";
 
@@ -75,6 +77,7 @@
   word-wrap: normal;
   color: $color-black;
   font-size: 12px;
+  font-variant-ligatures: none;
   @include respond-tablet {
     font-size: 13px;
   }
@@ -98,12 +101,14 @@
   list-style: none;
   background-color: white;
   @include respond-tablet {
-    margin-top: 2px;
     position: absolute;
-    top: $grid * 4;
+    top: 37px;
+  }
+  @include respond-desktop {
+    top: $grid * 6;
   }
   li { margin-bottom: 0; }
-  a {
+  .dropdown-item, a {
     border-top: 1px solid rgba(0,0,0,.2);
     padding-top: 11px;
     &:hover {
@@ -112,7 +117,25 @@
       }
     }
   }
-  .dropdown-header,
+
+  .dropdown-item {
+    color: black;
+    display: block;
+    font-weight: 200;
+    font-size: 20px;
+  }
+
+  .dropdown-item-supplement:not(:first-child) {
+    margin-inline-start: 8px;
+  }
+
+  .dropdown-item:hover {
+    cursor: pointer;
+    color: $color-white;
+    background: #0F86FB;
+  }
+
+  .dropdown-header, .dropdown-item,
   a {
     text-align: left;
     padding-left: 14px;
@@ -277,8 +300,7 @@ ul { list-style-type: none; }
 // The Basics (Structure)
 
 html {
-  height: 100%;
-  min-height: 100%;
+  min-height: 100vh;
   margin: 0;
 }
 
@@ -287,7 +309,18 @@ body {
   color: $color-black;
   font-family: $font-body;
   margin: 0;
-  min-height: 100%;
+}
+
+body {
+  // for sticky footer
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#after-modals {
+  // for sticky footer
+  flex: 1;
 }
 
 footer {
@@ -354,7 +387,7 @@ td {
 
 // The Basics (Heds)
 
-h1, h2, h3, h4, h5 {
+h1, h2, h3, h4, h5, h6 {
   font-family: $font-hed-alt;
   font-weight: 900;
   line-height: 1.2;
@@ -814,9 +847,54 @@ a.cc {
   }
 }
 
+//
+// admin stats page
+//
+
 .stats-container a {
   text-decoration: underline;
 }
+
+.stats-container {
+  h3 + div + div, h3 + div + button, h3 + button {
+    margin-top: 8px;
+  }
+}
+
+#celery {
+  word-wrap: break-word;
+}
+
+.queue-block {
+  height: 300px;
+  overflow-y: auto;
+  margin-bottom: 36px;
+}
+
+#rate-limits-status {
+  color: $color-orange;
+  margin-top: 0;
+  margin-left: .7em;
+}
+
+.bucket-stats {
+  padding-left: 0;
+  padding-bottom: 15px;
+  word-wrap: break-word;
+
+  &.col-sm-6 {
+    padding-left: 0px !important;
+  }
+}
+
+.over-limit:not(:first-child) {
+  padding-top: 15px;
+}
+
+.over-limit:not(:last-child) {
+  border-bottom: 1px solid $color-trans-lightgray;
+}
+
 
 /////////////////////////////////////////
 
@@ -960,9 +1038,9 @@ a.cc {
 }
 
 .row.row-halfgutter {
-  margin: 0 $bleed / 2 !important;
+  margin: 0 $bleed * 0.5 !important;
   @include all-columns {
-    padding: 0 $bleed / -2;
+    padding: 0 math.div($bleed, -2);
   }
 }
 
@@ -975,8 +1053,6 @@ a.cc {
   margin-left: -2px;
   margin-right: -2px;
 }
-
-.col {}
 
 .col.col-no-gutter {
   padding-left: 0;
@@ -1002,7 +1078,15 @@ div.col-right {
 
 .col-sm-10by3 {
   @include respond-tablet {
-    width: 100% * (5 / 18); // 10/3 width
+    width: 100% * math.div(5, 18); // 10/3 width
+    float: left;
+  }
+}
+
+.col-sm-by4 {
+  width: 100%;
+  @include respond-desktop {
+    width: 100 * 0.25 * 1%;
     float: left;
   }
 }
@@ -1010,7 +1094,7 @@ div.col-right {
 .col-sm-by5 {
   width: 100%;
   @include respond-desktop {
-    width: 100 / 5 * 1%;
+    width: 100 * 0.2 * 1%;
     float: left;
   }
 }
@@ -1018,7 +1102,7 @@ div.col-right {
 .col-sm-by6 {
   width: 100%;
   @include respond-desktop {
-    width: 100 / 6 * 1%;
+    width: math.div(100, 6) * 1%;
     float: left;
   }
 }
@@ -1158,7 +1242,7 @@ div.col-right {
       background-color: $color-active !important;
     }
   }
-  &.cancel {
+  &.cancel, &.update-affiliation-btn {
     border-color: $color-orange;
     color: $color-orange;
     background-color: white;
@@ -1172,6 +1256,12 @@ div.col-right {
       background-color: white !important;
       border-color: $color-black;
       color: $color-black !important;
+    }
+  }
+  &.update-affiliation-btn {
+    &:hover, &:focus {
+      color: $color-green !important;
+      border-color: $color-green;
     }
   }
   &.btn-bookmarklet {
@@ -1212,7 +1302,7 @@ div.col-right {
   &.delete-confirm {
     background-color: $color-error;
     &:hover, &:focus {
-      background-color: $color-black !important;
+      background-color: $color-error !important;
     }
     &:active {
       background-color: $color-error !important;
@@ -1367,7 +1457,7 @@ button {
 
 .dropdown {
   .selector {
-    width: 100.3%;
+    width: 100%;
     text-align: left;
     font-size: 18px;
     font-weight: 200;
@@ -1415,6 +1505,8 @@ button {
   .selector-menu {
     @include style-dropdown;
     padding-bottom: 0px;
+    max-height: 50vh;
+    overflow-y: auto;
     a {
       font-size: 18px;
       font-weight: 200;
@@ -1470,6 +1562,30 @@ button {
   @include respond-tablet {
     font-size: 22px;
   }
+}
+
+ul.page-dek-list {
+  list-style-type: disc;
+  padding-left: 1.25em;
+  margin-bottom: 1em;
+  font-family: $font-hed-alt;
+  font-weight: 300;
+  font-size: 16px;
+  @include respond-tablet {
+    font-size: 22px;
+  }
+  a {
+    font-weight: 700;
+    &:hover {
+      color: $color-blue;
+      text-decoration: underline;
+    }
+  }
+}
+
+h3.page-section-title {
+  font-weight: 400;
+  margin-top: $double;
 }
 
 .body-text {
@@ -1716,123 +1832,6 @@ button {
   @include respond-tablet {
     float: right;
     display: inline-block;
-  }
-}
-
-/////////////////////////////////////////
-
-// Carousel
-
-.carousel {
-  text-align: center;
-  .carousel-inner {
-    height: $grid * 16;
-  }
-  .ui-chev-left, .ui-chev-right {
-    height: 25px;
-    width: 28px;
-    background-color: transparent;
-    display: inline-block;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    z-index: 5;
-    background-repeat: no-repeat;
-    background-position: 0 0;
-    background-size: 168px 25px;
-    &:hover {
-      background-position-x: -28px * 3;
-    }
-    &:active {
-      background-position-x: -28px * 1;
-    }
-  }
-  .ui-chev-left {
-    background-image: url('../img/ui/perma-ui-chev-left-big.png');
-  }
-  .ui-chev-right {
-    background-image: url('../img/ui/perma-ui-chev-right-big.png');
-  }
-  .item {
-    text-align: center;
-    padding: 0 166px;
-  }
-  .item a.square img {
-    margin-top: 10px;
-    height: 74px;
-  }
-}
-
-.carousel-indicators {
-  position: absolute;
-  top: 115px;
-  bottom: 0px;
-  left: 50%;
-  z-index: 15;
-  width: 60%;
-  padding-left: 0;
-  margin-left: -30%;
-  text-align: center;
-  list-style: none;
-  li {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    margin: 1px !important;
-    text-indent: -999px;
-    cursor: pointer;
-    border: 2px solid $color-orange;
-    border-radius: 10px;
-    background-color: transparent;
-  }
-  .active {
-    width: 12px;
-    height: 12px;
-    margin: 0 !important;
-    background-color: $color-orange;
-  }
-}
-
-#carousel-example-generic,
-#examples {
-  display: none;
-  @include respond-tablet {
-    display: block;
-  }
-}
-
-.carousel-inner > .item > a > img {
-  height: 37px;
-  opacity: 0.6;
-  padding: 5px;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  -moz-border-radius: 3px;
-  -webkit-border-radius: 3px;
-  -ms-border-radius: 3px;
-  margin-bottom: 10px;
-  display: inline;
-  list-style-type: none;
-  width: auto;
-  -webkit-filter: grayscale(100%);
-  filter: gray;
-  filter: grayscale(100%);
-}
-
-.carousel-indicators {
-  position: static;
-  width: 100%;
-  margin-left: 0;
-}
-
-.carousel-control {
-  position: absolute;
-  background-color: transparent;
-  opacity: 0.9;
-  bottom: 0;
-  &:focus {
-    outline: none;
   }
 }
 
@@ -2150,6 +2149,9 @@ div.cont-reading + div.overview {
     + li {
       margin-top: 1em;
     }
+    + li.tight {
+      margin-top: 0;
+    }
   }
 }
 
@@ -2397,7 +2399,7 @@ figcaption + .img-responsive {
   border-color: transparent;
 }
 
-.alert-success, .alert-info {
+.alert-success, .alert-info, .alert-error {
   color: $color-green;
   background-color: $color-white;
   border: 2px solid $color-green;
@@ -2430,8 +2432,16 @@ figcaption + .img-responsive {
   }
 }
 
+.alert-error {
+  color: $color-error-a;
+  border: 2px solid $color-error-a;
+  h4 {
+    color: $color-error-a;
+  }
+}
+
 .alert-block {
-  margin: $double 0 $grid * 4;
+  margin: $grid * 6 0 $grid * 4;
 }
 
 .close-browser-tools {
@@ -2554,9 +2564,6 @@ figcaption + .img-responsive {
 }
 
 .label-affil {
-  width: 100%;
-  float: left;
-  text-align: left;
   border-color: transparent;
   border-top-width: 1px;
   border-bottom-width: 1px;
@@ -2598,42 +2605,36 @@ figcaption + .img-responsive {
       padding: $grid * 6 $grid * 4;
     }
   }
+  .input-bar {
+    @include respond-tablet {
+      display: flex;
+      flex-direction: row;
+      align-items: start;
+    }
+  }
   input.form-priority-input {
+    flex: 1;
     margin: 0;
-    width: 100%;
+    margin-right: $grid;
     padding: 16px 14px;
     height: auto;
     font-size: 16px;
     @include respond-tablet {
-      margin: 0;
-      width: $grid * 57;
-      float: left;
       padding: 14px;
       height: auto;
       font-size: 20px;
     }
-    @include respond-desktop {
-      width: $grid * 85;
-    }
-    @include respond-wide {
-      width: $grid * 111;
-    }
   }
   .wrapper {
+    flex-shrink: 0;
     position: relative;
-    width: 100%;
     margin-top: $double;
     text-align: center;
     @include respond-tablet {
       margin-top: 0;
-      float: right;
-      width: $grid * 23;
-    }
-    @include respond-desktop {
-      width: $grid * 25;
     }
   }
-  .form-priority-fieldset .btn {
+  .capture-button {
     width: 100%;
     margin-top: 2px;
     margin-bottom: $grid;
@@ -2642,16 +2643,12 @@ figcaption + .img-responsive {
       background-color: transparent !important;
       text-align: center;
       padding-bottom: 0px;
-      padding-top: 32px;
       color: $color-blue;
       border-color: transparent !important;
       opacity: 1;
-      .spinner {
-        left: 50%;
-        top: 10px;
-      }
       &:hover, &:focus {
         color: $color-blue !important;
+        outline: none !important;
       }
     }
   }
@@ -2686,14 +2683,20 @@ figcaption + .img-responsive {
         width: $grid * 30;
       }
     }
-    .form-priority-fieldset .btn {
-      background-color: $color-orange;
+    .capture-button {
+      background-color: $color-orange-a;
+      &:hover, &:focus {
+        background-color: $color-orange !important;
+      }
+      &._isWorking {
+        background-color: transparent !important;
+      }
     }
     #organization_select_form {
       .selector {
         background-color: transparent;
       }
-      .dropdown.open {
+      &.open {
         .selector {
           color: $color-blue;
           background-color: white;
@@ -2709,18 +2712,20 @@ figcaption + .img-responsive {
     }
   }
 
+  .links-remaining-message,
+  #browser-tools-message {
+    margin-top: $grid * 3;
+  }
 
-  #links-remaining-message,
+  .links-remaining-message,
   #browser-tools-message,
   #organization_select_form {
-    margin-top: $grid * 3;
     text-align: center;
-    float: left;
     width: 100%;
     max-width: none;
     font-family: $font-hed-alt;
   }
-  #links-remaining-message,
+  .links-remaining-message,
   #browser-tools-message {
     color: $color-blue;
     font-weight: 700;
@@ -2745,8 +2750,33 @@ figcaption + .img-responsive {
       }
     }
   }
-  #organization_select_form {
+
+  #organization_select_wrapper {
     margin-top: $grid * 5;
+
+    .label-affil {
+      margin-bottom: 8px;
+    }
+
+    @include respond-tablet {
+      display: flex;
+      align-items: center;
+
+      .label-affil {
+        flex-shrink: 0;
+        margin-bottom: 0;
+        margin-right: 14px;
+      }
+
+      .dropdown-affil {
+        flex-grow: 1;
+      }
+    }
+  }
+
+  #organization_select_form {
+    text-align: left;
+    width: 100%;
     .selector-affil:disabled {
       color:$color-trans-darkgray;
 
@@ -2754,19 +2784,9 @@ figcaption + .img-responsive {
         background-color:$color-trans-darkgray;
       }
     }
-    .dropdown-affil {
-      float: left;
-      text-align: left;
-      margin-top: $grid;
-      width: 100%;
-    }
 
-    @include respond-tablet {
-      @include link-dropdown-widths(656px, $grid * 41);
-      .dropdown-affil {
-        margin-top: 0;
-      }
-    }
+    @include link-dropdown-widths(656px, $grid * 41);
+
     @include respond-desktop {
       @include link-dropdown-widths(894px, $grid * 46);
     }
@@ -2807,10 +2827,6 @@ figcaption + .img-responsive {
   }
 }
 
-.manage-links {
-  margin-top: $grid * 4;
-}
-
 /////////////////////////////////////////
 
 // Create errors
@@ -2821,7 +2837,6 @@ figcaption + .img-responsive {
   text-align: center;
   margin-top: $grid * 3;
   @include respond-tablet {
-    margin-top: 0;
     padding: $grid * 2 $grid $grid * 3;
   }
   @include respond-desktop {
@@ -2885,6 +2900,22 @@ form {
     background-color: $color-blue;
     @extend .style-button-hover;
   }
+}
+
+fieldset.default-to-screenshot-view {
+  padding: 0;
+}
+
+legend.default-to-screenshot-view {
+  font-weight: 400;
+  margin: 0;
+  font-size: 14px;
+  border-bottom: none;
+}
+
+.row.item-details .form-group input[name="default-view"] {
+  width: auto;
+  margin-top: 4px;
 }
 
 fieldset {
@@ -2962,6 +2993,10 @@ input[type="file"] {
   line-height: 1ex;
 }
 
+input[type="number"] {
+  width: 160px;
+}
+
 div.checkbox {
   padding: $grid;
   background-color: $color-highlight;
@@ -2970,6 +3005,13 @@ div.checkbox {
   border-radius: 2px;
   padding-top: $grid;
   padding-left: 36px;
+}
+
+div.checkbox:has(#id_a-indefinite_sponsorship), div.checkbox:has(#indefinite_sponsorship), div.checkbox:has(#id_a-indefinite_affiliation), div.checkbox:has(#indefinite_affiliation) {
+  background-color: inherit;
+  padding-left: 0;
+  margin-right: 0;
+  margin-top: $grid * 2;
 }
 
 body.single-registrar div.checkbox {
@@ -3124,21 +3166,29 @@ button#addlink,
 }
 
 .contact-form {
-  // hide telephone so it will only be filled by spam bots
-  label[for="id_telephone"] {
+  // hide email_conformation so it will only be filled by spam bots
+  label[for="id_email_confirmation"] {
     display: none;
   }
-  textarea[name="telephone"] {
+  textarea[name="email_confirmation"] {
     display: none;
   }
 }
 
+.report-form {
+  label:after {
+    content: "*";
+    color: red;
+    padding-left: 3px;
+  }
+}
+
 .signup-learnMore-form, .add-user, .change-user {
-  // hide telephone so it will only be filled by spam bots
-  label[for="id_telephone"], label[for="id_a-telephone"] {
+  // hide email_confirmation so it will only be filled by spam bots
+  label[for="id_email_confirmation"], label[for="id_a-email_confirmation"] {
     display: none;
   }
-  input[name="telephone"], input[name="a-telephone"] {
+  input[name="email_confirmation"], input[name="a-email_confirmation"] {
     display: none;
   }
 }
@@ -3158,6 +3208,10 @@ button#addlink,
       bottom: -2px;
     }
   }
+}
+
+.org-user-actions form {
+  display: inline;
 }
 
 // special styling for subscription forms
@@ -3198,16 +3252,14 @@ button#addlink,
   textarea {
       height: 20em;
   }
-  .spinner {
-    position: relative;
-    height: 50px;
-    width: 50px;
-    margin: $grid 0 0 0;
-  }
 }
 
 #batch-create-input {
   margin-top: 20px;
+
+  #organization_select_form {
+    margin-top: 8px;
+  }
 }
 
 #batch-target {
@@ -3834,6 +3886,19 @@ footer {
 
 // Link browser
 
+.manage-links {
+  margin-top: $grid * 4;
+  @include bottom-shadow;
+
+  > .row {
+    height: 100%; // so columns fill .manage-links height
+  }
+
+  @media (min-width: $width-desktop) {
+    height: 90vh;
+  }
+}
+
 .panel {
   box-shadow: none;
   -webkit-box-shadow: none;
@@ -3857,10 +3922,20 @@ footer {
 }
 
 .col-folders {
-  overflow-y: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   padding-bottom: 0;
 
-  > .panel-heading {
+  #batch-list-toggle {
+    flex-shrink: 0;
+  }
+  #batch-history {
+    flex: 1;
+    overflow-y: auto;
+  }
+ .panel-heading {
+    flex-shrink: 0;
     border-top: 2px solid #2D76EE;
     padding-top: 8px;
     margin-bottom: $double;
@@ -3877,7 +3952,9 @@ footer {
       @extend .style-standard-hover;
     }
   }
- #folder-tree {
+  #folder-tree {
+    flex: 1;
+    overflow-y: auto;
     font-family: $font-hed-alt;
     padding: $grid $grid 0 0;
     border-top: 1px solid $color-trans-lightgray;
@@ -3918,11 +3995,7 @@ footer {
 
 .col-folders, #folder-tree {
   @media (max-width: $width-desktop) {
-    margin-bottom: $double;
-    // override IE-10 compatible JS on mobile
-    // to improve experience for users w/ few folders
-    height: 30vh !important;
-    padding-bottom: 5ex !important;
+    height: 50vh;
   }
 }
 
@@ -3957,27 +4030,13 @@ footer {
 .col-links, .col-folders {
   border-left: none;
   position: relative;
-  padding-bottom: $grid * 3;
-
-  @media (max-width: $width-desktop) {
-    // override IE-10 compatible JS on mobile
-    // to improve experience for users w/ few folders
-    height: 75vh !important;
-  }
-
-  &.scrolling {
-    overflow-y: scroll;
-    @include bottom-shadow;
-  }
-  &.scrolled {
-    @include top-bottom-shadow;
-  }
 }
 
 .col-links {
-  &.scrolling {
-    overflow-x: hidden;
-  }
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
   &.recent-links {
     width: 100%;
     padding-top: $grid * 3;
@@ -4013,10 +4072,15 @@ footer {
   }
   .link-headers {
     padding: 0 0 $double;
+    flex-shrink: 0;
+  }
+  .search-query-form {
+    flex-shrink: 0;
   }
   .item-rows {
+    flex: 1;
+    overflow-y: auto;
     padding: $grid * 3 0 0;
-    overflow: visible;
     .alert-success {
       margin-top: 0;
     }
@@ -4040,23 +4104,15 @@ footer {
   text-align: center;
   font-weight: 200;
   font-size: 24px;
-  margin-top: $double;
+  margin: $grid * 4 0 $grid * 7;
   font-family: $font-hed-alt;
   color: $color-blue;
-  @include respond-tablet {
-    margin-top: $grid * 6;
-  }
 }
 
 .item-container._isExpandable {
   &._active {
     @include style-card(black);
-    margin: 0 -$grid $double -$grid;
-    padding: $grid * 2 $grid;
-    @include respond-tablet {
-      margin: 0 -$double $double -$double;
-      padding: $grid * 2 $double;
-    }
+    padding-bottom: 0;
     &:hover {
       border-top-color: black;
       .item-title-display {
@@ -4355,9 +4411,17 @@ ol.result-list {
       width: auto;
       padding-bottom: $grid;
     }
+
+    label,
+    .default_to_screenshot_view-save-status {
+      width: auto;
+      padding-bottom: $grid;
+    }
+
     .title-save-status,
     .description-save-status,
-    .notes-save-status {
+    .notes-save-status,
+    .default_to_screenshot_view-save-status {
       color: $color-orange;
       margin-top: 0;
       margin-left: .7em;
@@ -4495,6 +4559,20 @@ span.action, a.action-heading {
   right: 0;
 }
 
+.bulk-users {
+  position: absolute;
+  top: 50px;
+  right: 22px;
+  font-size: 16px;
+  font-weight: 200;
+}
+
+.bulk-users a {
+  color: #2D76EE;
+  text-decoration: underline;
+  font-weight: normal;
+}
+
 .org-settings {
   margin-top: $double;
 }
@@ -4531,21 +4609,22 @@ span.action, a.action-heading {
     margin-left: 5px;
   }
   .button-wrapper {
-    display:inline-block;
-    float:right;
+    display: inline-block;
+    float: right;
   }
 }
 
 #add-member {
   padding-bottom: 0;
+  margin-top: 50px;
 }
 
 .admin-data {
-  margin: $grid * 3 0 0;
+  margin: $grid * 6 0 0;
   border-top: 1px solid $color-blue;
   padding-top: 1px;
   @include respond-tablet  {
-    margin: $grid * 3 0;
+    margin: $grid * 6 0;
   }
 }
 
@@ -4839,6 +4918,7 @@ h6.image-hed {
   font-size: 16px;
   display: inline-block;
   border-bottom: 2px solid $color-blue;
+  margin-top: $grid * 1.25;
   margin-bottom: $grid * 0;
   padding-top: 0;
   color: $color-blue;
@@ -4895,7 +4975,7 @@ h6.image-hed {
     border-bottom: 1px solid $color-blue;
   }
   .row.outer {
-    margin: 0 -$grid * 4;
+    margin: 0 (-$grid * 4);
   }
   .col-xs-12 {
     border-bottom: 1px solid $color-blue;
@@ -5313,6 +5393,13 @@ section .caption {
   height: $grid * 10;
   @include respond-tablet {
     height: $grid * 12;
+  }
+}
+
+#supporting-partners a img.wide {
+  padding: $grid;
+  @include respond-tablet {
+    padding: $double;
   }
 }
 
@@ -5864,5 +5951,208 @@ li[data-is_sponsored_root_folder="true"] > a {
 li[data-read_only="true"] {
  .icon-folder-close-alt:before, & .icon-folder-open-alt:before {
     content: "\1F512";
+  }
+}
+
+/* Measurements use calc so rem measurements are 1:1 with px size
+Example: calc(4rem / 16) is equal to 4px or 0.25rem */
+.u-pb-150 {
+  padding-bottom: calc(18rem / 16);
+}
+
+.u-min-h-48 {
+  min-height: 12rem;
+}
+.c-button {
+  cursor: pointer;
+}
+
+.c-button--icon {
+  display: flex;
+  align-items: center;
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 2rem;
+  background: none;
+  border: none;
+  padding: 0;
+
+  &:hover, &:focus {
+    color: #2D76EE;
+  }
+}
+
+.c-button--icon:not(:last-child) {
+  margin-inline-end: 1rem;
+}
+
+.c-button__chevron {
+  margin-inline: 1rem;
+}
+
+.c-button--link, .c-button--privateLink {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: $font-hed;
+  text-decoration: underline;
+  font-weight: 400;
+}
+
+.c-button--link {
+  color: #2D76EE;
+  &:hover, &:focus {
+    color: $color-hover;
+  }
+}
+
+.c-button--privateLink {
+  color: $color-orange-a;
+
+  &:hover, &:focus {
+    text-decoration: none;
+    color: $color-orange;
+  }
+}
+
+.c-dialog {
+  margin-block-start: 0;
+  width: 100%;
+  padding: 0;
+  border: none;
+
+  @include respond-tablet {
+    margin-block-start: 3.75rem;
+    width: unset;
+  }
+
+  &::backdrop {
+    background-color: rgba(255, 255, 255, 0.95)
+  }
+}
+
+.c-sectionHeading {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  justify-content: start;
+  gap: 0.6rem;
+  border-block-start: 2px solid $color-blue;
+  padding-block-start: $grid;
+  padding-block-end: $grid * 2;
+}
+
+.c-sectionHeading__name {
+  font-size: 2.2rem;
+  color: $color-blue;
+  font-family: $font-hed-alt;
+  font-weight: 700;
+}
+
+.c-sectionHeading__iconButton {
+  grid-column: -1 / -1;
+  justify-self: end;
+}
+
+/* CSS transition classes automatically added/removed by Vue */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.modify-org-exp-btn {
+  width: 100%;
+  margin-top: 6px !important;
+  @include respond-tablet {
+    width: auto;
+    margin-top: 0 !important;
+  }
+}
+
+/* copy link button */
+
+.copy-icon-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin-left: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+  color: #666;
+  vertical-align: middle;
+}
+
+.copy-icon-btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.copy-icon-btn:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 1px;
+}
+
+.copy-icon-btn:active {
+  background-color: rgba(0, 0, 0, 0.15);
+  transform: scale(0.95);
+}
+
+.copy-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* Screen reader only text */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Success feedback animation */
+.copy-icon-btn.copied {
+  color: #28a745;
+}
+
+.copy-icon-btn.copied svg {
+  animation: copySuccess 0.3s ease;
+}
+
+@keyframes copySuccess {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* Banner styles */
+.top-banner {
+  background-color: $color-banner-background;
+  padding: 12px;
+  text-align: center;
+  font-family: $font-hed;
+
+  p {
+    max-width: inherit;
+    font-size: $size-medium;
+  }
+
+  .top-banner-title {
+    font-weight: 700;
+    font-size: $size-body;
   }
 }

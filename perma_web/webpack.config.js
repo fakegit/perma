@@ -3,6 +3,7 @@ var webpack = require('webpack');
 var autoprefixer = require('autoprefixer');
 var BundleTracker = require('webpack-bundle-tracker');
 var MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const { VueLoaderPlugin } = require('vue-loader')
 
 module.exports = {
   context: __dirname,
@@ -21,13 +22,13 @@ module.exports = {
     ],
 
     // each of these entry points will also include global.js, so should be listed in CommonsChunkPlugin below
-    'create': './static/js/create',
     'single-link-permissions': './static/js/single-link-permissions.module',
-    'map': './static/js/map',
     'link-delete-confirm': './static/js/link-delete-confirm',
     'developer-docs': './static/js/developer-docs',
-    'stats': './static/js/stats',
     'admin-stats': './static/js/admin-stats',
+
+    // for the new Vue frontend
+    'dashboard': './static/frontend/pages/dashboard.js',
   },
 
   output: {
@@ -61,6 +62,7 @@ module.exports = {
     // }),
 
     new MiniCssExtractPlugin(),
+    new VueLoaderPlugin()
   ],
 
   module: {
@@ -82,16 +84,16 @@ module.exports = {
         }
       },
 
-      // handlebars template
+      // Vue stuff
       {
-        test: /\.handlebars$/,
-        loader: 'handlebars-loader',
-        options: {
-          runtime: 'handlebars/dist/handlebars.min.js',
-          helperDirs: [
-            __dirname + "/static/js/hbs/helpers",
-          ]
-        }
+        test: /\.vue$/,
+        loader: 'vue-loader'
+      },
+
+      {
+        test: /\.mjs$/,
+        include: /node_modules/,
+        type: "javascript/auto"
       },
 
       // inline css
@@ -175,6 +177,8 @@ module.exports = {
       'papaparse': 'papaparse/papaparse.min.js',
 
       'jquery-form': 'jquery-form/jquery.form.js',
+
+      'vue': 'vue/dist/vue.esm-bundler.js'
     }
   },
 

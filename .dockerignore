@@ -1,7 +1,12 @@
 **
 !perma_web/Dockerfile
+!perma_web/pyproject.toml
+!perma_web/uv.lock
 !perma_web/requirements.txt
 !perma_web/package.json
 !perma_web/npm-shrinkwrap.json
-!services/warcprox/perma-warcprox-ca.pem
+!perma_web/perma-warcprox-ca.pem
+!perma_web/lil-archive-keyring.gpg
 !playwright/requirements.txt
+!services/js-wacz/package.json
+!services/js-wacz/package-lock.json

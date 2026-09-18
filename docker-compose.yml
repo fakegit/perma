@@ -1,5 +1,3 @@
-version: '2'
-
 services:
   #
   # Perma
@@ -13,28 +11,27 @@ services:
     volumes:
       - redis_data:/data:delegated
   db:
-    image: registry.lil.tools/library/postgres:12.8
+    image: registry.lil.tools/library/postgres:16.6
     environment:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: perma
       POSTGRES_USER: perma
     volumes:
-      - postgres_data:/var/lib/postgresql/data:delegated
+      - postgres_data_16:/var/lib/postgresql/data:delegated
     networks:
       - default
+      - superset
   web:
-    build:
-      context: .
-      dockerfile: ./perma_web/Dockerfile
-    image: perma3:0.149
+    image: registry.lil.tools/harvardlil/perma-web:144-51d2441d655dffd7f28c12c6deae6a44
     tty: true
     command: bash
     # TO AUTOMATICALLY START PERMA:
     # (sleep hack to give the database and rabbitmq time to start up)
     # command: >
-    #   sh -c "sleep 10 && ./manage.py migrate && fab run"
+    #   sh -c "sleep 10 && ./manage.py migrate && invoke run"
     volumes:
       # NAMED VOLUMES
+      - scoop_access_key:/tmp/scoop_access_key:ro
       # Use a named, persistent volume so that the node_modules directory,
       # which is created during the image's build process, and which our
       # code presently expects to be nested inside the perma_web directory,
@@ -47,12 +44,14 @@ services:
       - ./services/cloudflare:/perma/services/cloudflare
       - ./services/django:/perma/services/django:delegated
       - ./services/logs:/perma/services/logs:delegated
-      - ./services/warcprox:/perma/services/warcprox:delegated
+      # for playwright tests
+      - ./services/docker/s3/ssl:/tmp/s3_ssl
+      - ./services/docker/wacz-exhibitor/ssl:/tmp/wacz-exhibitor_ssl
     # give chrome lots of space for making big screenshots
     # https://github.com/elgalu/docker-selenium/issues/20
     shm_size: 2G
     environment:
-      - DOCKERIZED=True
+      - DJANGO_LIVE_TEST_SERVER_ADDRESS=0.0.0.0
     extra_hosts:
       - "perma.test:127.0.0.1"
       - "api.perma.test:127.0.0.1"
@@ -65,210 +64,92 @@ services:
         aliases:
           - 'perma.test'
           - 'api.perma.test'
-      webrecorder:
-
+      scoop_rest_api:
+        aliases:
+          - 'perma.test'
 
   #
-  # Perma Functional Tests
+  # S3-compatible storage
   #
-  selenium:
-    image: registry.lil.tools/selenium/standalone-chrome:3.141.59-fluorine
-    volumes:
-      - /dev/shm:/dev/shm
+  # Versity S3 Gateway with its posix backend: each bucket is a top-level
+  # directory in the s3_data volume, and each object is a file at its key's path.
+  # The perma.minio.test hostname predates the switch from MinIO and is kept so
+  # existing hosts-file entries still work.
+  s3:
+    image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+    entrypoint:
+      - "/entrypoint.sh"
     environment:
-      - START_XVFB=false
+      - ROOT_ACCESS_KEY=accesskey
+      - ROOT_SECRET_KEY=secretkey
+      - VGW_PORT=:9000
+      - VGW_CERT=/ssl/public.crt
+      - VGW_KEY=/ssl/private.key
+      - VGW_CORS_ALLOW_ORIGIN=https://replay.perma.test:8000
+      - VGW_BACKEND=posix
+      - VGW_BACKEND_ARG=/data
+      - BUCKET=perma-storage
+      - SECONDARY_BUCKET=perma-secondary-storage
+    volumes:
+      - ./services/docker/s3/entrypoint.sh:/entrypoint.sh
+      - ./services/docker/s3/ssl:/ssl
+      - s3_data:/data
     ports:
-      - "127.0.0.1:4444:4444"
+      - "127.0.0.1:9000:9000"
+    extra_hosts:
+      - "perma.minio.test:127.0.0.1"
     networks:
-      - default
-      
-  #
-  # Perma Functional Tests
-  #
-  playwright:
-    build:
-      context: .
-      dockerfile: ./playwright/Dockerfile
-    image: perma-playwright:0.0031415926
-    volumes:
-      - ./playwright:/playwright:delegated
-    environment:
-      - START_XVFB=false
-    command: bash
-    tty: true
-    links:
-      - "web:perma.test"
-      - "nginx:perma-archives.test"
-    networks:
-      - default
-      - webrecorder
+      default:
+        aliases:
+          - 'perma.minio.test'
 
   #
-  # Perma Payments
+  # wacz-exhibitor
   #
-  pp_db:
-    image: registry.lil.tools/library/postgres:12.8
-    environment:
-      - POSTGRES_PASSWORD=example
-    volumes:
-      - pp_db_data:/var/lib/postgresql/data:delegated
-    networks:
-      - perma_payments
-
-  perma-payments:
-    image: registry.lil.tools/harvardlil/perma-payments:0.37
-    # hack: sleep to give the database time to start up
-    command: >
-      sh -c "sleep 5 && ./manage.py migrate && fab run"
+  wacz-exhibitor:
+    image: registry.lil.tools/harvardlil/wacz-exhibitor:6-ec122b8e74374fd90ad71189cbd42b62
     ports:
-      - "127.0.0.1:80:80"
-    depends_on:
-      - pp_db
-    environment:
-      - DOCKERIZED=True
-      - DJANGO__DATABASES__default__HOST=pp_db
-    # TO CUSTOMIZE CONFIG:
-    # copy ./services/docker/perma-payments/settings.py.example
-    # to ./services/docker/perma-payments/settings.py,
-    # alter config as desired, in the usual way, then comment in this volume
-    # and re-run docker-compose up
-    # volumes:
-    #   - ./services/docker/perma-payments/settings.py:/perma-payments/config/settings/settings.py
+      - "127.0.0.1:8080:8080"
+    extra_hosts:
+      - "rejouer.perma.test:127.0.0.1"
     networks:
-      - default
-      - perma_payments
+      default:
+        aliases:
+          - 'rejouer.perma.test'
+    volumes:
+      - ./services/docker/wacz-exhibitor/ssl:/etc/nginx/certs
 
   #
   # Upload scanning
   #
   filecheck:
-    image: registry.lil.tools/harvardlil/perma-filecheck:0.92
-    environment:
-      - UVICORN_PORT=8888
+    build:
+      context: ${FILECHECK_BUILD_CONTEXT:-https://github.com/harvard-lil/perma-filecheck.git#main}
+      target: dev
+    # Check build inputs on every up; unchanged layers use the build cache.
+    pull_policy: build
+    volumes:
+      - filecheck_clamav_data:/var/lib/clamav
     ports:
-      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:8888:8080"
     networks:
       - default
 
-  #
-  # Webrecorder
-  #
-  app:
-    image: registry.lil.tools/harvardlil/webrecorder:0.12
-    command: uwsgi --need-app /code/apps/apiapp.ini
-    env_file:
-      - ./services/docker/webrecorder/wr.env
-    environment:
-      - REFUSE_PLAYBACK=${REFUSE_PLAYBACK}
-    depends_on:
-      - warcserver
-      - recorder
-      - redis
-    volumes:
-      - wr_warcs:/data/warcs:ro
-      - ./services/docker/webrecorder/wr-custom.yaml:/code/webrecorder/config/wr-custom.yaml:ro
-      - ./services/docker/webrecorder/contentcontroller.py:/code/webrecorder/contentcontroller.py:ro
-      # Temporary patches for webrecorder
-      - ./services/docker/webrecorder/maincontroller.py:/code/webrecorder/maincontroller.py:ro
-      - ./services/docker/webrecorder/importer.py:/code/webrecorder/models/importer.py:ro
-    networks:
-      - webrecorder
-
-  recorder:
-    image: registry.lil.tools/harvardlil/webrecorder:0.12
-    user: root
-    entrypoint:
-      - "/docker-entrypoint.sh"
-    command:
-      - "uwsgi"
-      - "--need-app"
-      - "/code/apps/rec.ini"
-    environment:
-      - WR_DEBUG=False
-    env_file:
-      - ./services/docker/webrecorder/wr.env
-    depends_on:
-      - warcserver
-      - redis
-    volumes:
-      - wr_warcs:/data/warcs
-      - ./services/docker/webrecorder/wr-custom.yaml:/code/webrecorder/config/wr-custom.yaml:ro
-      - ./services/docker/webrecorder/docker-entrypoint.sh:/docker-entrypoint.sh:ro
-      # Temporary patches for webrecorder
-      # https://github.com/webrecorder/webrecorder/pull/716
-      - ./services/docker/webrecorder/recorder_main.py:/code/webrecorder/rec/main.py:ro
-      - ./services/docker/webrecorder/tempchecker.py:/code/webrecorder/rec/tempchecker.py:ro
-      - ./services/docker/webrecorder/local.py:/code/webrecorder/rec/storage/local.py:ro
-      - ./services/docker/webrecorder/collection.py:/code/webrecorder/models/collection.py:ro
-      # fixes a bug on prod, where sometimes the user is removed from redis before the storage committer code runs
-      - ./services/docker/webrecorder/recording.py:/code/webrecorder/models/recording.py:ro
-    networks:
-      - webrecorder
-
-  warcserver:
-    image: registry.lil.tools/harvardlil/webrecorder:0.12
-    command: uwsgi --need-app /code/apps/load.ini
-    env_file:
-      - ./services/docker/webrecorder/wr.env
-    depends_on:
-      - redis
-    volumes:
-      - wr_warcs:/data/warcs
-      - ./services/docker/webrecorder/wr-custom.yaml:/code/webrecorder/config/wr-custom.yaml:ro
-    networks:
-      - webrecorder
-
-  nginx:
-    image: registry.lil.tools/harvardlil/nginx:0.03
-    depends_on:
-      - app
-    volumes:
-      - wr_warcs:/data/warcs:ro
-      - ./services/docker/webrecorder/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./services/docker/webrecorder/nginx/webrec.conf:/etc/nginx/webrec.conf:ro
-    ports:
-      # The WR API. See perma_web/perma/settings/settings_common "WR_API"
-      # for a description of when to expose this port
-      # - "127.0.0.1:8089:80"
-      # WR "content"/playback host
-      - "127.0.0.1:8092:81"
-    extra_hosts:
-      - "perma-archives.test:127.0.0.1"
-    networks:
-      default:
-        aliases:
-          - 'perma-archives.test'
-      webrecorder:
-
-  redis:
-    image: registry.lil.tools/library/redis:4.0.6
-    env_file:
-      - ./services/docker/webrecorder/wr.env
-    volumes:
-      - wr_redis_data:/data:delegated
-    networks:
-      - webrecorder
 
 volumes:
+  filecheck_clamav_data:
   node_modules:
-  postgres_data:
+  postgres_data_16:
   redis_data:
-  pp_db_data:
-  wr_warcs:
-  wr_redis_data:
+  scoop_redis_data:
+  scoop_postgres_data:
+  scoop_access_key:
+  s3_data:
+  superset_data:
 
 networks:
   default:
-  perma_payments:
-  # TO CONNECT TO A SEPARATELY-RUNNING WEBRECORDER INSTANCE
-  # instead of spinning one up here from our pre-built image
-  # --------------------------------------------------------
-  # 1) start the WR containers first, via WR's own repo and docker-compose file
-  # 2) comment out the Webecorder service and all its associated containers above
-  # 3) uncomment the "external" stanza below,
-  # 4) finally, start Perma's containers
-  #
-  # (recommended for simultaneous Perma and Webrecorder development)
-  webrecorder:
-  #   external:
-  #     name: webrecorder_default
+  scoop_rest_api:
+      name: perma-scoop-api_default
+  scoop_rest_api_internal:
+  superset:

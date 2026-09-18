@@ -34,10 +34,10 @@ Welcome to the Perma.cc developer guide.
       <h3 id="authentication" class="body-bh">Authentication</h3>
       <p class="body-text">Many of the endpoints require you to authenticate with an API key.</p>
       {% if request.user.get_api_key %}
-        <p class="body-text">Your <a href="{% url 'user_management_settings_tools' %}">API Key</a> is <code>{{ request.user.get_api_key }}</code>.</p>
+        <p class="body-text">Your <a href="{% url 'settings_tools' %}">API Key</a> is <code>{{ request.user.get_api_key }}</code>.</p>
       {% else %}
         <p class="body-text">
-          Find your API key in <a href="{% url 'user_management_settings_tools' %}">Settings > Tools</a>. Click the <i>Generate an API key</i> button to create a new key.
+          Find your API key in <a href="{% url 'settings_tools' %}">Settings > Tools</a>. Click the <i>Generate an API key</i> button to create a new key.
         </p>
         <img src="{{ STATIC_URL }}img/docs/create-api-key.png" class="img-responsive screen-shot" alt="Screenshot of Settings > Tools page. A button labeled 'Generate an API key' appears near the bottom of the page."/>
       {% endif %}
@@ -55,6 +55,7 @@ Welcome to the Perma.cc developer guide.
       <pre>curl {{base_url}}/public/archives/?offset=1</pre>
       <p class="body-text">If you'd prefer a smaller or larger result set, specify the desired size of the pages using the <i>limit</i> parameter. In this example, we request results returned one at a time.</p>
       <pre>curl {{base_url}}/public/archives/?limit=1</pre>
+      <p>You can use the value of <i>next</i> in the <i>meta</i> section of the response to move to the next page of results, but note that <i>next</i> will be populated even if there are no more results at that offset; stop getting more results when <i>objects</i> is an empty list.</p>
 
       <h3 id="examples-in-curl" class="body-bh">Examples in cURL</h3>
       <p class="body-text">Our API documentation is example based, and our examples show you how to interact with the API using the <a href="http://en.wikipedia.org/wiki/CURL">cURL command line utility</a>. A friendly tip - you can add the -v option to help debug your HTTP interactions.</p>
@@ -70,26 +71,16 @@ Welcome to the Perma.cc developer guide.
     <div class="col-sm-8 docs reading-body">
     <h2 class="body-ah">Public Archives</h2>
 
-    <p class="body-text">The Public Archives API endpoint helps you find all publicly available Perma.cc archives. You do not need an API Key to use this portion of the API.</p>
+    <p class="body-text">The Public Archives API endpoint helps you find publicly available Perma.cc archives. You do not need an API Key to use this portion of the API.</p>
     <p class="body-text">The base endpoint for this API is <code>{{base_url}}/public/archives/</code></p>
+
+    <p class="body-text">This API provides access to the most recently created Perma Links. To inquire about access to data beyond this limit, <a href="{% url 'contact' %}?subject=Public%20Perma%20Link%20Dataset%20Inquiry">please drop us a note</a>.</p>
 
     <h3 id="get-all-public-archives" class="body-bh">Get all public archives</h3>
     <p class="body-text">Use HTTP GET to retrieve every public archive in Perma.cc. (In order to keep this example short, we limit the number of returned items to one.)</p>
     <pre>curl {{base_url}}/public/archives/?limit=1</pre>
     <p class="body-text">Response:</p>
-    <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/public/archives/?limit=1&offset=1","offset":0,"previous":null,"total_count":410},"objects":[{"guid":"W6PY-UZ99","creation_timestamp":"2018-05-15T18:13:52Z","url":"http://example.com","title":"Example Domain","description":null,"warc_size":20932,"warc_download_url":"{{ base_url }}/public/archives/W6PY-UZ99/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///W6PY-UZ99/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":4}]}</pre>
-
-    <h3 id="get-one-archive" class="body-bh">Get a single public archive's details</h3>
-    <p class="body-text">If we have the globally unique ID (GUID) of one public archive, we can GET details about it.</p>
-    <pre>curl {{ base_url }}/public/archives/W5MF-N9EV/</pre>
-    <p class="body-text">Response:</p>
-    <pre class="prettyprint">{"guid":"W5MF-N9EV","creation_timestamp":"2018-05-14T15:12:33Z","url":"http://example.com","title":"Example Domain","description":null,"warc_size":19156,"warc_download_url":"{{ base_url }}/public/archives/W5MF-N9EV/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///W5MF-N9EV/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":3,"capture_time":4}</pre>
-
-    <h3 id="download-one-archive" class="body-bh">Download a single public archive</h3>
-    <p class="body-text">Perma archives are downloadable and can be viewed using tools that can replay WARC files, like <a href="https://github.com/webrecorder/webrecorderplayer-electron/releases/latest">Rhizome's Webrecorder Player</a>.</p>
-    <pre>wget {{ base_url }}/public/archives/Y6JJ-TDUJ/download</pre>
-    <p>or</p>
-    <pre>curl -o your_favorite_filename.warc.gz {{ base_url }}/public/archives/Y6JJ-TDUJ/download</pre>
+    <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/public/archives/?limit=1&offset=1","offset":0,"previous":null},"objects":[{"guid":"W6PY-UZ99","creation_timestamp":"2018-05-15T18:13:52Z","url":"http://example.com","title":"Example Domain","description":null,"warc_size":20932,"wacz_size":21844,"captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///W6PY-UZ99/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":4}]}</pre>
 
     </div>
   </div>
@@ -108,8 +99,33 @@ Welcome to the Perma.cc developer guide.
       <p class="body-text">Use GET to retrieve your account details. (You only have access to your own account.)</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/user/</pre>
       <p class="body-text">The response includes your user ID and a list of all the top-level folders you have access to. For more information about these folders, their subfolders, and their associated organizations, use the Folders and Organizations API endpoints.</p>
-      <pre class="prettyprint">{"id": 4, "first_name": "Jane", "last_name": "Doe", "full_name": "Jane Doe", "short_name": "Jane", "top_level_folders":[{"id":25,"name":"Personal Links","parent":null,"has_children":true,"path":"25","organization":null}]}</pre>
-
+      <pre class="prettyprint">
+        {
+          "id": 4,
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "full_name": "Jane Doe",
+          "short_name": "Jane",
+          "top_level_folders": [
+            {
+              "id": 25,
+              "name": "Personal Links",
+              "parent": null,
+              "organization": null,
+              "sponsored_by": null,
+              "is_sponsored_root_folder": false,
+              "read_only": false,
+              "has_children": false,
+              "path": "25",
+              "registrar": null,
+              "registrar_name": null,
+              "default_to_private": false
+            }
+          ]
+        }
+      </pre>
+      In addition to the keys returned by the folder endpoing, top_level_folders also includes some extra fields that are useful for displaying a user's affiliations:
+      <code>registrar</code>, <code>registrar_name</code>, and <code>default_to_private</code>.
     </div>
   </div>
 </div>
@@ -128,7 +144,7 @@ Welcome to the Perma.cc developer guide.
       <p class="body-text">Use GET to retrieve a list of all of the organizations you belong to or manage.</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/organizations/</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"meta":{"limit":300,"next":null,"offset":0,"previous":null,"total_count":2},"objects":[{"id":4,"name":"Another Library's Journal","registrar":"Another Library","default_to_private":false,"shared_folder":{"id":40,"name":"Another Library's Journal","parent":null,"has_children":true,"path":"40","organization":4}},{"id":9,"name":"Some Org","registrar":"Test Library","default_to_private":false,"shared_folder":{"id":57,"name":"Some Org","parent":null,"has_children":false,"path":"57","organization":9}}]}</pre>
+      <pre class="prettyprint">{"meta":{"limit":300,"next":"{{ base_url }}/organizations/?limit=300&offset=300","offset":0,"previous":null},"objects":[{"id":4,"name":"Another Library's Journal","registrar":"Another Library","default_to_private":false,"shared_folder":{"id":40,"name":"Another Library's Journal","parent":null,"has_children":true,"path":"40","organization":4}},{"id":9,"name":"Some Org","registrar":"Test Library","default_to_private":false,"shared_folder":{"id":57,"name":"Some Org","parent":null,"has_children":false,"path":"57","organization":9}}]}</pre>
 
       <h3 id="get-one-organization" class="body-bh">Get an organization's details</h3>
       <p class="body-text">Use GET to retrieve details about an organization.</p>
@@ -158,7 +174,7 @@ Welcome to the Perma.cc developer guide.
 <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -H 'Content-Type: application/json' -X POST -d '{"url": "http://example.com", "title": "This is an example site", "folder": 1}' {{ base_url }}/archives/
 curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -H 'Content-Type: application/json' -X POST -d '{"url": "http://example.com", "title": "This is another example site", "folder": 27}' {{ base_url }}/archives/</pre>
       <p class="body-text">The response includes detailed information about the newly created archive, including the globally unique ID (GUID) of the archive:</p>
-      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19.516152Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":null,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":null,"capture_time":null,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19.516152Z","organization":null}</pre>
+      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19.516152Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":null,"warc_download_url":null,"wacz_size":null,"wacz_download_url":null,"captures":[{"role":"primary","status":"pending","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false}],"queue_time":null,"capture_time":null,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19.516152Z","organization":null}</pre>
       <p class="body-text">Note that finalized details about an archive may not be available immediately: fields will update until the archiving process is complete. Use the Capture Job API and additional Archives API endpoints to get up-to-date details about a GUID.</p>
       <p class="body-text">To create many archives at once, use the Archives API endpoints for <a href="#batches">Batches</a></p>
 
@@ -166,34 +182,43 @@ curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-k
       <p class="body-text">Use GET to retrieve details about an archive owned by you or by one of your organizations. More details are available via this authenticated Archives endpoint than are available from the non-authenticated Public Archives endpoint.</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/archives/85LS-BXV7/</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
+      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","wacz_size":20183,"wacz_download_url":"{{ base_url }}/archives/85LS-BXV7/download?file_format=wacz","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
 
       <h3 id="download-one-archive-auth" class="body-bh">Download a single archive</h3>
-      <p class="body-text">Perma archives are downloadable and can be viewed using tools that can replay WARC files, like <a href="https://github.com/webrecorder/webrecorderplayer-electron/releases/latest">Rhizome's Webrecorder Player</a>.</p>
+      <p class="body-text">Perma archives are downloadable and can be viewed using tools that can replay WARC or WACZ files, like <a href="https://replayweb.page/">ReplayWeb.page</a>.</p>
+
+      <h4 class="body-ch">WARC</h4>
+
       <pre>wget --header "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/archives/Y6JJ-TDUJ/download</pre>
       <p>or</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -o your_favorite_filename.warc.gz {{ base_url }}/archives/Y6JJ-TDUJ/download</pre>
+
+      <h4 class="body-ch">WACZ</h4>
+
+      <pre>wget --header "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/archives/Y6JJ-TDUJ/download?file_format=wacz</pre>
+      <p>or</p>
+      <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -o your_favorite_filename.wacz {{ base_url }}/archives/Y6JJ-TDUJ/download?file_format=wacz</pre>
 
       <h3 id="move-to-dark-archive" class="body-bh">Make an archive private</h3>
       <p class="body-text">Use PATCH to make an archive private.</p>
       <p class="body-text">Include the GUID of the archive in the URL, and set the archive's "is_private" field to true using JSON-encoded data: </p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -H 'Content-Type: application/json' -X PATCH -d '{"is_private": true}' {{ base_url }}/archives/85LS-BXV7/</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
+      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"This is an example site","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","wacz_size":21837,"wacz_download_url":"{{ base_url }}/archives/85LS-BXV7/download?file_format=wacz","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
 
       <h3 id="edit-title-and-notes" class="body-bh">Edit the title and notes fields of an archive</h3>
       <p class="body-text">Use PATCH to change an archive's notes or title field.</p>
       <p class="body-text">Include the GUID of the archive in the URL, and specify your desired changes using JSON-encoded data: </p></p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -H 'Content-Type: application/json' -X PATCH -d '{"title": "My updated title"}' {{ base_url }}/archives/85LS-BXV7/</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"My updated title","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
+      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"My updated title","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","wacz_size":21837,"wacz_download_url":"{{ base_url }}/archives/85LS-BXV7/download?file_format=wacz","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":null}</pre>
 
       <h3 id="move-archive" class="body-bh">Move an archive</h3>
       <p class="body-text">Use PUT to move an archive into a different folder.</p>
       <p class="body-text">Include the ID of the destination folder as the first variable in the URL and the GUID of the archive as the second. The below example moves 85LS-BXV7 into folder 31.</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" -X PUT {{ base_url }}/folders/31/archives/85LS-BXV7/</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"My updated title","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":{"id":3,"name":"A Third Journal","registrar":"Test Library","default_to_private":true,"shared_folder":{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}}}</pre>
+      <pre class="prettyprint">{"guid":"85LS-BXV7","creation_timestamp":"2018-05-16T16:11:19Z","url":"http://example.com","title":"My updated title","description":null,"warc_size":20924,"warc_download_url":"{{ base_url }}/archives/85LS-BXV7/download","wacz_size":21837,"wacz_download_url":"{{ base_url }}/archives/85LS-BXV7/download?file_format=wacz","captures":[{"role":"primary","status":"success","url":"http://example.com","record_type":"response","content_type":"text/html","user_upload":false},{"role":"screenshot","status":"success","url":"file:///85LS-BXV7/cap.png","record_type":"resource","content_type":"image/png","user_upload":false}],"queue_time":0,"capture_time":3,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-17T16:11:19Z","organization":{"id":3,"name":"A Third Journal","registrar":"Test Library","default_to_private":true,"shared_folder":{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}}}</pre>
 
       <h3 id="delete-archive" class="body-bh">Delete an archive</h3>
       <p class="body-text">Use DELETE to delete an archive.</p>
@@ -206,7 +231,7 @@ curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-k
       <p class="body-text">This includes both public and private archives and includes all folders. (We're limiting ourselves to just 1 result to keep this example short.)</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/archives/?limit=1</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/archives/?limit=1&offset=1","offset":0,"previous":null,"total_count":147},"objects":[{"guid":"F9BV-XLHU","creation_timestamp":"2018-05-05T23:03:41Z","url":"http://example.com","title":"example.com","description":"","warc_size":null,"warc_download_url":"{{ base_url }}/archives/F9BV-XLHU/download","captures":[{"role":"primary","status":"success","url":"file:///F9BV-XLHU/upload.png","record_type":"resource","content_type":"image/png","user_upload":true}],"queue_time":null,"capture_time":null,"notes":"","created_by":{"id":1,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-06T23:03:41Z","organization":{"id":3,"name":"A Third Journal","registrar":"Test Library","default_to_private":true,"shared_folder":{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}}}]}</pre>
+      <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/archives/?limit=1&offset=1","offset":0,"previous":null},"objects":[{"guid":"F9BV-XLHU","creation_timestamp":"2018-05-05T23:03:41Z","url":"http://example.com","title":"example.com","description":"","warc_size":null,"warc_download_url":null,"wacz_size":null,"wacz_download_url":null,"captures":[{"role":"primary","status":"pending","url":"file:///F9BV-XLHU/upload.png","record_type":"resource","content_type":"image/png","user_upload":true}],"queue_time":null,"capture_time":null,"notes":"","created_by":{"id":1,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":true,"private_reason":"user","user_deleted":false,"archive_timestamp":"2018-05-06T23:03:41Z","organization":{"id":3,"name":"A Third Journal","registrar":"Test Library","default_to_private":true,"shared_folder":{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}}}]}</pre>
       <p class="body-text">To restrict the results to a single folder, use the Folders API endpoint.</p>
 
       <h3 id="batches" class="body-bh">Work with batches of archives</h3>
@@ -251,13 +276,13 @@ curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-k
       <h3 id="view-folder-subfolders" class="body-bh">View a folder's subfolders</h3>
       <p class="body-text">Use GET to list a "parent" folder's "children" (subfolders). Include the ID of the parent folder in the URL.</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/folders/24/folders</pre>
-      <pre class="prettyprint">{"meta":{"limit":300,"next":null,"offset":0,"previous":null,"total_count":2},"objects":[{"id":106,"name":"a new folder","parent":24,"has_children":false,"path":"24-106","organization":null},{"id":74,"name":"Another Folder","parent":24,"has_children":false,"path":"24-74","organization":null}]}</pre>
+      <pre class="prettyprint">{"meta":{"limit":300,"next":"{{ base_url }}/folders/24/folders?limit=300&offset=300","offset":0,"previous":null},"objects":[{"id":106,"name":"a new folder","parent":24,"has_children":false,"path":"24-106","organization":null},{"id":74,"name":"Another Folder","parent":24,"has_children":false,"path":"24-74","organization":null}]}</pre>
       <p class="body-text">"Path" describes the full ancestry of the folder. If folder 36 is nested inside folder 35 and folder 35 is nested in folder 25, the "path" for folder 36 is "25-35-36"</p>
 
       <h3 id="view-folder-archives" class="body-bh">View a folder's archives</h3>
       <p class="body-text">Use GET to list the archives stored in a folder. (We're limiting ourselves to just 1 result to keep this example short.)</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/folders/25/archives?limit=1</pre>
-      <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/folders/24/archives?limit=1&offset=1","offset":0,"previous":null,"total_count":49},"objects":[{"guid":"X5BR-VEZT","creation_timestamp":"2018-01-31T14:46:49Z","url":"http://perma.cc","title":"Perma.cc","description":" Broken links are everywhere. Perma helps authors and journals create permanent links for citations in their published work.","warc_size":2700433,"warc_download_url":"{{base_url }}/v1/archives/X5BR-VEZT/download","captures":[{"role":"primary","status":"success","url":"http://perma.cc","record_type":"response","content_type":"text/html; charset=utf-8","user_upload":false},{"role":"screenshot","status":"success","url":"file:///X5BR-VEZT/cap.png","record_type":"resource","content_type":"image/png","user_upload":false},{"role":"favicon","status":"success","url":"https://perma.cc/static/img/favicon.ico","record_type":"response","content_type":"image/x-icon","user_upload":false}],"queue_time":0,"capture_time":10,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-02-01T14:46:49Z","organization":null}]}</pre>
+      <pre class="prettyprint">{"meta":{"limit":1,"next":"{{ base_url }}/folders/24/archives?limit=1&offset=1","offset":0,"previous":null},"objects":[{"guid":"X5BR-VEZT","creation_timestamp":"2018-01-31T14:46:49Z","url":"http://perma.cc","title":"Perma.cc","description":" Broken links are everywhere. Perma helps authors and journals create permanent links for citations in their published work.","warc_size":2700433,"warc_download_url":"{{base_url }}/v1/archives/X5BR-VEZT/download","wacz_size":2701999,"wacz_download_url":"{{base_url }}/v1/archives/X5BR-VEZT/download?file_format=wacz","captures":[{"role":"primary","status":"success","url":"http://perma.cc","record_type":"response","content_type":"text/html; charset=utf-8","user_upload":false},{"role":"screenshot","status":"success","url":"file:///X5BR-VEZT/cap.png","record_type":"resource","content_type":"image/png","user_upload":false},{"role":"favicon","status":"success","url":"https://perma.cc/static/img/favicon.ico","record_type":"response","content_type":"image/x-icon","user_upload":false}],"queue_time":0,"capture_time":10,"notes":"","created_by":{"id":3,"first_name":"Jane","last_name":"Doe","full_name":"Jane Doe","short_name":"Jane"},"is_private":false,"private_reason":null,"user_deleted":false,"archive_timestamp":"2018-02-01T14:46:49Z","organization":null}]}</pre>
       <p class="body-text">Note that archives stored in the folder's subfolders are not included.</p>
 
       <h3 id="rename-folder" class="body-bh">Rename a folder</h3>
@@ -284,7 +309,7 @@ curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-k
       <p class="body-text">Use GET to retrieve a list of all the top-level folders you have access to. This information is also available at the User API endpoint.</p>
       <pre>curl -H "Authorization: ApiKey {{ request.user.get_api_key | default:'your-api-key'}}" {{ base_url }}/folders</pre>
       <p class="body-text">Response:</p>
-      <pre class="prettyprint">{"meta":{"limit":300,"next":null,"offset":0,"previous":null,"total_count":2},"objects":[{"id":24,"name":"Personal Links","parent":null,"has_children":true,"path":"24","organization":null},{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}]}</pre>
+      <pre class="prettyprint">{"meta":{"limit":300,"next":"{{ base_url }}/folders?limit=300&offset=300","offset":0,"previous":null},"objects":[{"id":24,"name":"Personal Links","parent":null,"has_children":true,"path":"24","organization":null},{"id":31,"name":"A Third Journal","parent":null,"has_children":true,"path":"31","organization":3}]}</pre>
       <p class="body-text">Use additional Folders API endpoints to retrieve details about these folders, including listing their subfolders and the archives they contain.</p>
     </div>
   </div>

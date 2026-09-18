@@ -1,19 +1,19 @@
-from glob import glob
-
-import os
 import dateutil.parser
-from django.conf import settings
-from django.core.files.storage import default_storage
-from django.urls import reverse
-from django.http import StreamingHttpResponse
-from django.test.utils import override_settings
 from io import StringIO
-import json
-import urllib.parse
+from glob import glob
+import os
 import re
-from mock import patch
+from requests.exceptions import RequestException
+from requests import request as orig_request
 
-from .utils import ApiResourceTestCase, ApiResourceTransactionTestCase, TEST_ASSETS_DIR, index_warc_file
+from django.conf import settings
+from django.urls import reverse
+from django.test.utils import override_settings
+
+from unittest.mock import patch
+import pytest
+
+from .utils import ApiResourceTestCase, ApiResourceTransactionTestCase, TEST_ASSETS_DIR, index_warc_file, raise_on_call, raise_after_call, return_on_call, MockResponse
 from perma.models import Link, LinkUser, Folder
 
 
@@ -27,6 +27,14 @@ class LinkResourceTestMixin():
 
     rejected_status_code = 400  # Bad Request
 
+    @pytest.fixture(autouse=True)
+    def _pass_fixtures(self, capsys):
+        self.capsys = capsys
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+
     def setUp(self):
         super(LinkResourceTestMixin, self).setUp()
 
@@ -39,11 +47,13 @@ class LinkResourceTestMixin():
 
         self.unrelated_link = Link.objects.get(pk="7CF8-SS4G")
         self.unrelated_private_link = Link.objects.get(pk="ABCD-0001")
+        self.capture_view_link = Link.objects.get(pk="ABCD-0007")
         self.link = Link.objects.get(pk="3SLN-JHX9")
         self.sponsored_user_link = Link.objects.get(pk="ABCD-0011")
 
         self.sponsored_user_link_detail_url = "{0}/{1}".format(self.list_url, self.sponsored_user_link.pk)
         self.unrelated_link_detail_url = "{0}/{1}".format(self.list_url, self.unrelated_link.pk)
+        self.capture_view_link_url = "{0}/{1}".format(self.list_url, self.capture_view_link.pk)
         self.link_detail_url = "{0}/{1}".format(self.list_url, self.link.pk)
 
         self.logged_in_list_url = self.list_url
@@ -51,14 +61,9 @@ class LinkResourceTestMixin():
         self.logged_in_private_link_download_url = reverse('api:archives_download', args=[self.unrelated_private_link.pk])
 
         self.public_list_url = reverse('api:public_archives')
-        self.public_link_detail_url = reverse('api:public_archives', args=[self.link.pk])
-        self.public_link_download_url = reverse('api:public_archives_download', args=[self.link.pk])
-        self.public_link_download_url_for_private_link = reverse('api:public_archives_download', args=[self.unrelated_private_link.pk])
 
-        self.replaced_link_public_download_url = reverse('api:public_archives_download', args=['ABCD-0006'])
-        self.replaced_link_public_download_redirect_target = reverse('api:public_archives_download', args=['3SLN-JHX9'])
         self.replaced_link_authed_download_url = reverse('api:archives_download', args=['ABCD-0006'])
-        self.replaced_link_authed_download_redirect_target = reverse('api:archives_download', args=['3SLN-JHX9'])
+        self.replaced_link_authed_download_redirect_target = f"{reverse('api:archives_download', args=['3SLN-JHX9'])}?file_format=warc"
         self.replaced_link_owner = LinkUser.objects.get(id=4)
 
         self.logged_out_fields = [
@@ -70,6 +75,8 @@ class LinkResourceTestMixin():
             'captures',
             'warc_size',
             'warc_download_url',
+            'wacz_size',
+            'wacz_download_url',
             'queue_time',
             'capture_time',
         ]
@@ -82,21 +89,32 @@ class LinkResourceTestMixin():
             'private_reason',
         ]
 
-    def assertRecordsInWarc(self, link, upload=False, expected_records=None, check_screenshot=False):
+    def assertRecordsInArchive(self, link, upload=False, expected_records=None, check_screenshot=False, check_provenance_summary=False):
 
         def find_recording_in_warc(index, capture_url, content_type):
+            warc_content_type = "application/http; msgtype=response"
             return next(
                 (entry for entry in index if
-                    entry['content-type'] == 'application/http;msgtype=response' and
-                    entry['http:content-type'].split(';',1)[0] == content_type.split(';',1)[0] and
+                    entry['content-type'] == warc_content_type and
+                    entry.get('http:content-type', '').split(';',1)[0] == content_type.split(';',1)[0] and
                     re.fullmatch(r'^{}/?$'.format(capture_url), entry['warc-target-uri'])),
                 None
             )
 
+        # Perma uses resource records for attachments and uploads
         def find_file_in_warc(index, capture_url, content_type):
             return next(
                 (entry for entry in index if
                     entry['content-type'] ==  content_type and
+                    re.fullmatch(r'^{}/?$'.format(capture_url), entry['warc-target-uri'])),
+                None
+            )
+
+        # Scoop uses response records for attachments
+        def find_attachment_in_warc(index, capture_url):
+            return next(
+                (entry for entry in index if
+                    entry['content-type'] == 'application/http; msgtype=response' and
                     re.fullmatch(r'^{}/?$'.format(capture_url), entry['warc-target-uri'])),
                 None
             )
@@ -106,7 +124,7 @@ class LinkResourceTestMixin():
         self.assertTrue(link.primary_capture.content_type, "Capture is missing a content type.")
 
         # create an index of the warc
-        with default_storage.open(link.warc_storage_file(), 'rb') as warc_file:
+        with link.get_warc() as warc_file:
             index = index_warc_file(warc_file)
 
         # see if the index reports the content is in the warc
@@ -119,7 +137,13 @@ class LinkResourceTestMixin():
         if check_screenshot:
             self.assertEqual(link.screenshot_capture.status, 'success')
             self.assertTrue(link.screenshot_capture.content_type, "Capture is missing a content type.")
-            self.assertTrue(find_file_in_warc(index, link.screenshot_capture.url, link.screenshot_capture.content_type))
+            self.assertTrue(find_attachment_in_warc(index, link.screenshot_capture.url))
+
+        # repeat for the provenance summary
+        if check_provenance_summary:
+            self.assertEqual(link.provenance_summary_capture.status, 'success')
+            self.assertTrue(link.provenance_summary_capture.content_type, "Capture is missing a content type.")
+            self.assertTrue(find_attachment_in_warc(index, link.provenance_summary_capture.url))
 
 
 class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
@@ -129,20 +153,7 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
     #######
 
     def test_get_list_json(self):
-        self.successful_get(self.public_list_url, count=10)
-
-    def test_get_detail_json(self):
-        self.successful_get(self.public_link_detail_url, fields=self.logged_out_fields)
-
-    @patch('api.views.stream_warc', autospec=True)
-    def test_public_download(self, stream):
-        stream.return_value = StreamingHttpResponse(StringIO("warc placeholder"))
-        resp = self.api_client.get(self.public_link_download_url)
-        self.assertHttpOK(resp)
-        self.assertEqual(stream.call_count, 1)
-
-    def test_private_download_at_public_url(self):
-        self.rejected_get(self.public_link_download_url_for_private_link, expected_status_code=404)
+        self.successful_get(self.public_list_url, count=13)
 
     def test_private_download_unauthenticated(self):
         self.rejected_get(self.logged_in_private_link_download_url, expected_status_code=401)
@@ -154,26 +165,36 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
             user=self.firm_user
         )
 
-    def test_replaced_link_public_download(self):
-        resp = self.api_client.get(self.replaced_link_public_download_url)
-        self.assertEqual(resp.status_code, 302)
-        self.assertEqual(resp.url, self.replaced_link_public_download_redirect_target)
-
     def test_replaced_link_authed_download(self):
         self.api_client.force_authenticate(user=self.replaced_link_owner)
         resp = self.api_client.get(self.replaced_link_authed_download_url)
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, self.replaced_link_authed_download_redirect_target)
 
-    @patch('perma.utils.stream_warc', autospec=True)
-    def test_private_download(self, stream):
-        stream.return_value = StreamingHttpResponse(StringIO("warc placeholder"))
+    @patch('perma.models.Link.get_warc', autospec=True)
+    def test_private_download_warc(self, get_warc):
+        get_warc.return_value = StringIO("archive placeholder")
         self.api_client.force_authenticate(user=self.regular_user)
         resp = self.api_client.get(
             self.logged_in_private_link_download_url,
         )
         self.assertHttpOK(resp)
-        self.assertEqual(stream.call_count, 1)
+        self.assertEqual(resp.get('Content-Disposition', ''), f'attachment; filename="{self.unrelated_private_link.pk}.warc.gz"')
+        self.assertEqual(resp.get('Content-Type', ''), 'application/gzip')
+        self.assertEqual(get_warc.call_count, 1)
+
+    @patch('perma.models.Link.get_wacz', autospec=True)
+    def test_private_download_wacz(self, get_wacz):
+        get_wacz.return_value = StringIO("archive placeholder")
+        self.api_client.force_authenticate(user=self.regular_user)
+        resp = self.api_client.get(
+            f"{self.logged_in_private_link_download_url}?file_format=wacz",
+        )
+        self.assertHttpOK(resp)
+        self.assertEqual(resp.get('Content-Disposition', ''), f'attachment; filename="{self.unrelated_private_link.pk}.wacz"')
+        self.assertEqual(resp.get('Content-Type', ''), 'application/wacz')
+        self.assertEqual(get_wacz.call_count, 1)
+
 
     ############
     # Updating #
@@ -185,6 +206,11 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
                               data={'notes': 'These are new notes',
                                     'title': 'This is a new title',
                                     'description': 'This is a new description'})
+
+    def test_patch_default_view(self):
+        self.successful_patch(self.capture_view_link_url,
+                              user=self.capture_view_link.created_by,
+                              data={'default_to_screenshot_view': True})
 
     def test_should_reject_updates_to_disallowed_fields(self):
         response = self.rejected_patch(self.unrelated_link_detail_url,
@@ -278,14 +304,14 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
         self.assertEqual(objs[1]['notes'], 'Maybe the source of all cool things on the internet.')
 
     def test_should_allow_filtering_url(self):
-        data = self.successful_get(self.logged_in_list_url, data={'url': 'metafilter'}, user=self.regular_user)
+        data = self.successful_get(self.logged_in_list_url, data={'url': 'metafilter.com'}, user=self.regular_user)
         objs = data['objects']
 
         self.assertEqual(len(objs), 2)
         self.assertEqual(objs[0]['title'], 'MetaFilter | Community Weblog')
 
     def test_should_allow_filtering_by_date_and_query(self):
-        data = self.successful_get(self.logged_in_list_url, data={'url': 'metafilter','date':"2016-12-07T18:55:37Z"}, user=self.regular_user)
+        data = self.successful_get(self.logged_in_list_url, data={'url': 'metafilter.com','date':"2016-12-07T18:55:37Z"}, user=self.regular_user)
         objs = data['objects']
 
         self.assertEqual(len(objs), 1)
@@ -294,7 +320,7 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
 
     def test_should_allow_filtering_by_date_range_and_query(self):
         data = self.successful_get(self.logged_in_list_url, data={
-            'url': 'metafilter',
+            'url': 'metafilter.com',
             'min_date':"2016-12-06T18:55:37Z",
             'max_date':"2016-12-08T18:55:37Z",
         }, user=self.regular_user)
@@ -306,6 +332,7 @@ class LinkResourceTestCase(LinkResourceTestMixin, ApiResourceTestCase):
 
 
 # Use a TransactionTestCase here because archive capture is threaded
+@pytest.mark.uses_storage
 class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransactionTestCase):
 
     serve_files = glob(os.path.join(settings.PROJECT_ROOT, TEST_ASSETS_DIR, 'target_capture_files/*')) + [
@@ -368,19 +395,17 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                    user=self.org_user)
 
         link = Link.objects.get(guid=obj['guid'])
-        self.assertRecordsInWarc(link, check_screenshot=True)
-
-        # test favicon captured via meta tag
-        self.assertIn("favicon_meta.ico", link.favicon_capture.url)
-
+        self.assertRecordsInArchive(link, check_screenshot=True, check_provenance_summary=True)
+        self.assertTrue(link.primary_capture.content_type.startswith('text/html'))
         self.assertFalse(link.is_private)
         self.assertEqual(link.submitted_title, "Test title.")
-
         self.assertEqual(link.submitted_description, "Test description.")
+        self.assertRegex(link.captured_by_software, r'scoop @ harvard library innovation lab: \d+\.\d+.\d+')
+        expected_size = 22054
+        self.assertLessEqual(abs(link.wacz_size-expected_size), 100)
 
         # check folder
         self.assertTrue(link.folders.filter(pk=target_folder.pk).exists())
-
 
     @patch('perma.models.Registrar.link_creation_allowed', autospec=True)
     def test_should_create_archive_from_pdf_url(self, allowed):
@@ -394,7 +419,8 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                    user=self.org_user)
 
         link = Link.objects.get(guid=obj['guid'])
-        self.assertRecordsInWarc(link)
+        self.assertRecordsInArchive(link, check_provenance_summary=True)
+        self.assertEqual(link.primary_capture.content_type, 'application/pdf')
 
         # check folder
         self.assertTrue(link.folders.filter(pk=target_org.shared_folder.pk).exists())
@@ -534,141 +560,18 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
         self.assertEqual(bonus_links, 1)
 
 
-    def test_should_dark_archive_when_perma_noarchive_in_html(self):
+    @override_settings(PRIVATE_BY_POLICY_DOMAINS=['perma.test'])
+    def test_should_dark_archive_if_domain_in_setting(self):
         obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/perma-noarchive.html"},
+                                   data={'url': self.server_url + "/test.html"},
                                    user=self.org_user)
 
         link = Link.objects.get(guid=obj['guid'])
         self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-        # test favicon captured via favicon.ico well-known URL
-        self.assertIn("favicon.ico", link.favicon_capture.url)
-
-    @override_settings(PRIVATE_LINKS_IF_GENERIC_NOARCHIVE=False)
-    def test_should_not_dark_archive_if_generic_noarchive_in_html_with_setting(self):
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/noarchive.html"},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertFalse(link.is_private)
-
-        # test favicon captured via favicon.ico well-known URL
-        self.assertIn("favicon.ico", link.favicon_capture.url)
-
-    @override_settings(PRIVATE_LINKS_IF_GENERIC_NOARCHIVE=True)
-    def test_should_dark_archive_if_generic_noarchive_in_html_with_setting(self):
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/noarchive.html"},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-        # test favicon captured via favicon.ico well-known URL
-        self.assertIn("favicon.ico", link.favicon_capture.url)
-
-    def test_should_dark_archive_when_perma_disallowed_in_robots_txt(self):
-        with self.serve_file('extra_capture_files/robots.txt'):
-            obj = self.successful_post(self.list_url,
-                                       data={'url': self.server_url + "/subdir/test.html"},
-                                       user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-    @override_settings(PRIVATE_LINKS_IF_GENERIC_NOARCHIVE=False)
-    def test_should_not_dark_archive_when_generic_disallowed_in_xrobots_with_setting(self):
-        headers = urllib.parse.quote(json.dumps([("x-robots-tag", "noarchive")]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertFalse(link.is_private)
-
-    @override_settings(PRIVATE_LINKS_IF_GENERIC_NOARCHIVE=True)
-    def test_should_dark_archive_when_generic_disallowed_in_xrobots_with_setting(self):
-        headers = urllib.parse.quote(json.dumps([("x-robots-tag", "noarchive")]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-    def test_should_dark_archive_when_perma_disallowed_in_xrobots(self):
-        headers = urllib.parse.quote(json.dumps([("x-robots-tag", "perma: noarchive")]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-    def test_should_dark_archive_when_perma_disallowed_in_xrobots_multi(self):
-        headers = urllib.parse.quote(json.dumps([
-            ("x-robots-tag", "noindex"),
-            ("x-robots-tag", "perma: noarchive"),
-            ("x-robots-tag", "noindex"),
-        ]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-    def test_should_dark_archive_when_perma_disallowed_in_xrobots_malformed(self):
-        headers = urllib.parse.quote(json.dumps([
-            ("x-robots-tag", "noindex"),
-            ("x-robots-tag", "google: perma: noarchive"),
-            ("x-robots-tag", "noindex"),
-        ]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertTrue(link.is_private)
-        self.assertEqual(link.private_reason, "policy")
-
-    def test_should_not_dark_archive_when_allowed_in_xrobots(self):
-        headers = urllib.parse.quote(json.dumps([
-            ("x-robots-tag", "noindex"),
-            ("x-robots-tag", "perma: noindex"),
-            ("x-robots-tag", "noindex"),
-        ]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertFalse(link.is_private)
-
-    def test_should_not_dark_archive_when_allowed_in_xrobots_complex(self):
-        headers = urllib.parse.quote(json.dumps([
-            ("x-robots-tag", "noindex"),
-            ("x-robots-tag", "perma: noindex"),
-            ("x-robots-tag", "google: noarchive"),
-        ]))
-        obj = self.successful_post(self.list_url,
-                                   data={'url': self.server_url + "/test.html?response_headers=" + headers},
-                                   user=self.org_user)
-
-        link = Link.objects.get(guid=obj['guid'])
-        self.assertFalse(link.is_private)
+        self.assertTrue(link.private_reason == 'domain')
 
 
     def test_media_capture_in_iframes(self):
-        settings.ENABLE_AV_CAPTURE = True
         target_folder = self.org_user.root_folder
         obj = self.successful_post(self.list_url,
                                    data={
@@ -678,18 +581,17 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                    user=self.org_user)
 
         # verify that all images in src and srcset were found and captured
-        expected_records = (
+        expected_records = [
             # test_media_a.html
             ("test.wav", "audio/x-wav"), ("test2.wav", "audio/x-wav"),
             # test_media_b.html
             ("test.mp4", "video/mp4"), ("test2.mp4", "video/mp4"),
             # test_media_c.html
-            ("test.swf", "application/vnd.adobe.flash.movie"), ("test2.swf", "application/vnd.adobe.flash.movie"), ("test3.swf", "application/vnd.adobe.flash.movie"),
-            ("test1.jpg", "image/jpeg"), ("test2.png", "image/png"), ("test_fallback.jpg", "image/jpeg"),
+            ("test1.jpg", "image/jpeg"), ("test2.png", "image/png"),
             ("wide1.png", "image/png"), ("wide2.png", "image/png"), ("narrow.png", "image/png")
-        )
+        ]
         link = Link.objects.get(guid=obj['guid'])
-        self.assertRecordsInWarc(link, expected_records=expected_records)
+        self.assertRecordsInArchive(link, expected_records=expected_records)
 
 
     #########################
@@ -704,7 +606,7 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                        user=self.org_user)
 
             link = Link.objects.get(guid=obj['guid'])
-            self.assertRecordsInWarc(link, upload=True)
+            self.assertRecordsInArchive(link, upload=True)
             self.assertEqual(link.primary_capture.user_upload, True)
 
     def test_should_create_archive_from_jpg_file(self):
@@ -715,7 +617,28 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                        user=self.org_user)
 
             link = Link.objects.get(guid=obj['guid'])
-            self.assertRecordsInWarc(link, upload=True)
+            self.assertRecordsInArchive(link, upload=True)
+            self.assertEqual(link.primary_capture.user_upload, True)
+
+    def test_should_reject_jpg_file_with_invalid_url(self):
+        with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.jpg'), 'rb') as test_file:
+            obj = self.rejected_post(self.list_url,
+                                       format='multipart',
+                                       data=dict(self.post_data.copy(), url='asdf', file=test_file),
+                                       user=self.org_user)
+
+            self.assertIn(b'Enter a valid URL', obj.content)
+
+    def test_should_create_archive_from_jpg_file_with_nonloading_url(self):
+        with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.jpg'), 'rb') as test_file:
+            obj = self.successful_post(self.list_url,
+                                       format='multipart',
+                                       data=dict(self.post_data.copy(), url='asdf.asdf', file=test_file),
+                                       user=self.org_user)
+
+            link = Link.objects.get(guid=obj['guid'])
+            self.assertEqual(link.submitted_url, 'http://asdf.asdf')
+            self.assertRecordsInArchive(link, upload=True)
             self.assertEqual(link.primary_capture.user_upload, True)
 
     def test_should_reject_invalid_file(self):
@@ -726,16 +649,16 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
                                      user=self.org_user)
             self.assertIn(b'Invalid file', obj.content)
 
-    @patch('api.serializers.requests', autospec=True)
-    def test_should_reject_unsafe_file(self, requests):
-        requests.post.return_value = type('MockResponse', (), {'ok': True, 'json': lambda x: {"safe": False, "reason": "some reason"}})()
+    @patch('api.filecheck.requests.post', autospec=True)
+    def test_should_reject_unsafe_file(self, post):
+        post.return_value.json.return_value = {'verdict': 'unsafe', 'reason': 'virus detected'}
         with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.jpg'), 'rb') as test_file:
             obj = self.rejected_post(self.list_url,
                                      format='multipart',
                                      data=dict(self.post_data.copy(), file=test_file),
                                      user=self.org_user)
             self.assertIn(b'Validation failed', obj.content)
-        self.assertEqual(requests.post.call_count, 1)
+        post.assert_called_once()
 
 
     ############
@@ -785,3 +708,136 @@ class LinkResourceTransactionTestCase(LinkResourceTestMixin, ApiResourceTransact
         link = Link.objects.get(guid=obj['guid'])
         self.assertEqual(link.capture_job.status, 'completed')
         self.assertEqual(link.primary_capture.status, 'success')
+
+    def test_custom_title_not_overridden(self):
+        custom_title = 'The spiciest of test pages'
+        obj = self.successful_post(self.list_url,
+                                   data={
+                                       'url': self.server_url + "/test.html",
+                                       'title': custom_title,
+                                   },
+                                   user=self.org_user)
+
+        link = Link.objects.get(guid=obj['guid'])
+        self.assertRecordsInArchive(link)
+        self.assertEqual(link.submitted_title, custom_title)
+        self.assertEqual(link.submitted_description, "Test description.")
+
+    def test_no_title_or_description_found(self):
+        obj = self.successful_post(self.list_url,
+                                   data={
+                                       'url': self.server_url + "/no-title-or-description-test.html"
+                                   },
+                                   user=self.org_user)
+
+        link = Link.objects.get(guid=obj['guid'])
+        self.assertRecordsInArchive(link)
+        self.assertEqual(link.submitted_title, link.get_default_title())
+        self.assertIsNone(link.submitted_description)
+
+
+    ############################
+    # Scoop network conditions #
+    ############################
+
+    if settings.CAPTURE_ENGINE == 'scoop-api':
+
+        @patch('perma.utils.requests.request', autospec=True)
+        def test_scoop_capture_request_initial_network_error(self, mockrequest):
+            mockrequest.side_effect = raise_on_call(orig_request, 2, RequestException)
+            obj = self.successful_post(self.list_url,
+                                       data={
+                                           'url': self.server_url + "/test.html"
+                                       },
+                                       user=self.org_user)
+            link = Link.objects.get(guid=obj['guid'])
+            self.assertEqual(link.primary_capture.status, 'failed')
+            self.assertEqual(link.capture_job.status, 'failed')
+
+
+        @patch('perma.utils.requests.request', autospec=True)
+        def test_scoop_capture_request_over_capacity(self, mockrequest):
+            # https://github.com/harvard-lil/scoop-rest-api/blob/3115af8d6cb5eb623140f460b293e66a0c0d9b1e/scoop_rest_api/views/capture.py#L41
+            mockrequest.side_effect = return_on_call(orig_request, 2, MockResponse(
+                {"error": "Capture server is over capacity."},
+                429
+            ))
+            with self.assertLogs('celery.django', level='ERROR') as logs:
+                obj = self.successful_post(self.list_url,
+                                           data={
+                                               'url': self.server_url + "/test.html"
+                                           },
+                                           user=self.org_user)
+                link = Link.objects.get(guid=obj['guid'])
+                self.assertEqual(link.primary_capture.status, 'failed')
+                self.assertEqual(link.capture_job.status, 'failed')
+
+                log_string = " ".join(logs.output)
+                self.assertIn("perma.exceptions.ScoopAPIException", log_string)
+                self.assertIn("429", log_string)
+                self.assertIn("Capture server is over capacity", log_string)
+
+
+        @patch('perma.utils.requests.request', autospec=True)
+        def test_scoop_capture_request_transient_polling_error_handled(self, mockrequest):
+            mockrequest.side_effect = raise_on_call(orig_request, 4, RequestException)
+            obj = self.successful_post(self.list_url,
+                                       data={
+                                           'url': self.server_url + "/test.html"
+                                       },
+                                       user=self.org_user)
+            link = Link.objects.get(guid=obj['guid'])
+            self.assertEqual(link.primary_capture.status, 'success')
+            self.assertEqual(link.capture_job.status, 'completed')
+
+
+        @patch('perma.utils.requests.request', autospec=True)
+        def test_scoop_capture_request_polling_error_limit_exceeded(self, mockrequest):
+            mockrequest.side_effect = raise_after_call(orig_request, 3, RequestException)
+            obj = self.successful_post(self.list_url,
+                                       data={
+                                           'url': self.server_url + "/test.html"
+                                       },
+                                       user=self.org_user)
+            link = Link.objects.get(guid=obj['guid'])
+            self.assertEqual(link.primary_capture.status, 'failed')
+            self.assertEqual(link.capture_job.status, 'failed')
+            captured = self.capsys.readouterr()
+            self.assertIn("HaltCaptureException thrown\n", captured.out)
+
+
+    ############################
+    # Scoop simulated failures #
+    ############################
+
+    if settings.CAPTURE_ENGINE == 'scoop-api':
+
+        @patch('perma.utils.requests.request', autospec=True)
+        def test_scoop_capture_hung(self, mockrequest):
+            # from https://perma-stage.org/admin/perma/capturejob/2059/change/
+            mockrequest.side_effect = return_on_call(orig_request, 3, MockResponse({
+                "url": "https://www.nytimes.com/",
+                "status": "failed",
+                "id_capture": "2ca5dad1-20fd-4550-9129-a0ce64ecc662",
+                "stderr_logs": None,
+                "stdout_logs": None,
+                "callback_url": None,
+                "ended_timestamp": "Wed, 20 Sep 2023 15:57:44 GMT",
+                "created_timestamp": "Wed, 20 Sep 2023 15:56:34 GMT",
+                "started_timestamp": "Wed, 20 Sep 2023 15:56:34 GMT",
+                "scoop_capture_summary": None},
+                200
+            ))
+            with self.assertLogs('celery.django', level='WARNING') as logs:
+                obj = self.successful_post(self.list_url,
+                                           data={
+                                               'url': self.server_url + "/test.html"
+                                           },
+                                           user=self.org_user)
+                link = Link.objects.get(guid=obj['guid'])
+                self.assertEqual(link.primary_capture.status, 'failed')
+                self.assertEqual(link.capture_job.status, 'failed')
+
+                self.assertTrue('scoop-silent-failure' in [tag.name for tag in link.tags.all()])
+                log_string = " ".join(logs.output)
+                self.assertTrue("Scoop failed without logs" in log_string)

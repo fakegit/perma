@@ -1,6 +1,10 @@
 var webpackConfig = require('./webpack.config.js');
 var path = require("path");
 
+if (!process.env.CHROMIUM_BIN) {
+  process.env.CHROMIUM_BIN = '/usr/local/bin/playwright-chromium';
+}
+
 module.exports = function(config) {
   config.set({
     basePath: __dirname,

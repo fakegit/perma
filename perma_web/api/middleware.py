@@ -1,30 +1,27 @@
+from django.middleware.common import CommonMiddleware as DjangoCommonMiddleware
 from django.conf import settings
-from django.utils.cache import patch_vary_headers
-from django.utils.deprecation import MiddlewareMixin
 
-
-def get_subdomain(request):
+class CORSMiddleware(DjangoCommonMiddleware):
     """
-        Given request, get portion before the first .
+       Add CORS headers to requests made to `api.domain.ext`, so the API can be used in the browser.
     """
-    if not hasattr(request, 'subdomain'):
-        request.subdomain = request.get_host().split('.', 1)[0]
-    return request.subdomain
-
-
-class APISubdomainMiddleware(MiddlewareMixin):
-    def process_request(self, request):
-        if get_subdomain(request) == settings.API_SUBDOMAIN:
-            request.urlconf = 'api.urls'
-
     def process_response(self, request, response):
-        """
-        Forces the HTTP ``Vary`` header onto requests to avoid having responses
-        cached across subdomains.
+        response = super().process_response(request, response)
 
-        Copied from django-subdomains package.
-        """
-        if getattr(settings, 'FORCE_VARY_ON_HOST', True):
-            patch_vary_headers(response, ('Host',))
+        origin = request.headers.get("Origin")
+        if not origin: # Set origin to `*` if none was provided.
+            origin = "*"
+
+        if f"/v{settings.API_VERSION}/" in request.get_full_path(): # Applies to `/v1/` API urls.
+            # Force HTTP 200 for preflight requests (?).
+            # The browser doesn't pass a `Authorization` header during preflight (in most cases), our API therefore assumes this resource can't be accessed.
+            if request.method == "OPTIONS" and response.status_code == 401:
+                response.status_code = 200
+
+            response["Access-Control-Allow-Origin"] = origin
+            response["Access-Control-Allow-Headers"] = "Authorization,Content-Type"
+            response["Access-Control-Allow-Methods"] = "*"
+            #response["Access-Control-Allow-Credentials"] = "true"
+            # ^ Uncomment if we want to allow the browser to implicitly pass stored credentials.
 
         return response

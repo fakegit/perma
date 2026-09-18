@@ -1,70 +1,27 @@
 # -*- coding: utf-8 -*-
-from django.urls import reverse
-from django.core import mail
-from django.conf import settings
-from django.utils import timezone
 
-from mock import patch, sentinel
-
-from perma.models import LinkUser, Organization, Registrar, Sponsorship
-from perma.exceptions import PermaPaymentsCommunicationException
-
-from .utils import PermaTestCase
-
-from random import random
+import csv
+from io import StringIO
+import json
+from random import random, getrandbits
 import re
+
 from bs4 import BeautifulSoup
 from datetime import datetime
+from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
+from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.conf import settings
+from django.db import IntegrityError
+from django.test import override_settings
+from django.test.client import RequestFactory
+from django.utils.html import escape
 
+from perma.models import LinkUser, Organization, Registrar, Sponsorship, UserOrganizationAffiliation
+from perma.tests.utils import PermaTestCase
+from perma.forms import MultipleUsersFormWithOrganization
 
-# Fixtures
-
-GENESIS = datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
-
-def spoof_current_monthly_subscription():
-    return {
-        "status": "Current",
-        "rate": "10.00",
-        "frequency": "monthly",
-        "paid_through": GENESIS,
-        "link_limit": 10
-    }
-
-def spoof_current_monthly_subscription_with_scheduled_downgrade():
-    return {
-        "status": "Current",
-        "rate": "10.00",
-        "frequency": "monthly",
-        "paid_through": GENESIS,
-        "link_limit": 10,
-        "pending_change": {
-            "rate": "1.00",
-            "link_limit": 1,
-            "effective": GENESIS.replace(year=9999)
-        },
-    }
-
-def spoof_on_hold_monthly_subscription():
-    return {
-        "status": "Hold",
-        "rate": "7777.77",
-        "frequency": "monthly",
-        "paid_through": GENESIS,
-        "link_limit": 10
-    }
-
-
-def spoof_cancellation_requested_subscription():
-    return {
-        "status": "Cancellation Requested",
-        "rate": "3333.33",
-        "frequency": "monthly",
-        "paid_through": GENESIS,
-        "link_limit": 10
-    }
-
-
-# Tests
 
 class UserManagementViewsTestCase(PermaTestCase):
 
@@ -77,11 +34,13 @@ class UserManagementViewsTestCase(PermaTestCase):
         cls.inactive_sponsored_user = LinkUser.objects.get(pk=22)
         cls.another_inactive_sponsored_user = LinkUser.objects.get(pk=23)
         cls.regular_user = LinkUser.objects.get(pk=4)
+        cls.another_regular_user = LinkUser.objects.get(pk=16)
         cls.registrar = cls.registrar_user.registrar
         cls.pending_registrar = Registrar.objects.get(pk=2)
         cls.unrelated_registrar = Registrar.objects.get(pk=2)
         cls.unrelated_registrar_user = cls.unrelated_registrar.users.first()
         cls.organization = Organization.objects.get(pk=1)
+        cls.user_organization_affiliation = UserOrganizationAffiliation.objects.get(pk=1)
         cls.organization_user = cls.organization.users.first()
         cls.another_organization = Organization.objects.get(pk=2)
         cls.unrelated_organization = cls.unrelated_registrar.organizations.first()
@@ -216,30 +175,56 @@ class UserManagementViewsTestCase(PermaTestCase):
                              'a-name': 'new_name',
                              'a-email': 'test@test.com2',
                              'a-website': 'http://test.com'},
-                         success_url=reverse('user_management_settings_affiliations'),
+                         success_url=reverse('settings_affiliations'),
                          success_query=Registrar.objects.filter(name='new_name'))
 
     def test_registrar_cannot_update_unrelated_registrar(self):
         self.get('user_management_manage_single_registrar',
                  user=self.registrar_user,
                  reverse_kwargs={'args': [self.unrelated_registrar.pk]},
-                 require_status_code=404)
+                 require_status_code=403)
 
     def test_admin_can_approve_pending_registrar(self):
-        self.submit_form('user_management_approve_pending_registrar',
-                         user=self.admin_user,
-                         data={'status':'approved'},
-                         reverse_kwargs={'args': [self.pending_registrar.pk]},
-                         success_query=Registrar.objects.filter(pk=self.pending_registrar.pk,
-                                                                status="approved").exists())
+        self.submit_form(
+            'user_sign_up_approve_pending_registrar',
+            user=self.admin_user,
+            data={'status': 'approved', 'base_rate': '100.00'},
+            reverse_kwargs={'args': [self.pending_registrar.pk]},
+            success_query=Registrar.objects.filter(
+                pk=self.pending_registrar.pk, status='approved'
+            ).exists(),
+        )
 
     def test_admin_can_deny_pending_registrar(self):
-        self.submit_form('user_management_approve_pending_registrar',
-                         user=self.admin_user,
-                         data={'status': 'denied'},
-                         reverse_kwargs={'args': [self.pending_registrar.pk]},
-                         success_query=Registrar.objects.filter(pk=self.pending_registrar.pk,
-                                                                status="denied").exists())
+        self.submit_form(
+            'user_sign_up_approve_pending_registrar',
+            user=self.admin_user,
+            data={'status': 'denied', 'base_rate': '100.00'},
+            reverse_kwargs={'args': [self.pending_registrar.pk]},
+            success_query=Registrar.objects.filter(
+                pk=self.pending_registrar.pk, status='denied'
+            ).exists(),
+        )
+
+    def test_pending_registrar_name_is_escaped_in_denial_message(self):
+        payload = '<img src=x onerror=alert(1)>'
+        self.pending_registrar.name = payload
+        self.pending_registrar.save(update_fields=['name'])
+        self.log_in_user(self.admin_user)
+
+        response = self.client.post(
+            reverse(
+                'user_sign_up_approve_pending_registrar',
+                args=[self.pending_registrar.pk],
+            ),
+            {'status': 'denied', 'base_rate': '100.00'},
+            follow=True,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, escape(payload))
+        self.assertNotContains(response, payload)
 
     ### ORGANIZATION A/E/D VIEWS ###
 
@@ -288,7 +273,7 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertEqual(response.count(b'Test Journal'), 3 + 1)
         self.assertEqual(response.count(b'Another Journal'), 1 + 1)
         self.assertEqual(response.count(b"A Third Journal"), 3 + 1)
-        self.assertEqual(response.count(b"Another Library&#39;s Journal"), 3 + 1)
+        self.assertEqual(response.count(b"Another Library&#x27;s Journal"), 3 + 1)
         self.assertEqual(response.count(b"Some Case"), 1 + 1)
 
         # filter by org
@@ -345,6 +330,143 @@ class UserManagementViewsTestCase(PermaTestCase):
 
         # status filter tested in test_registrar_user_list_filters
 
+    def test_org_export_user_list(self):
+        expected_results = {
+            # Org ID: (record count, org name)
+            1: (3, 'Test Journal'),
+            2: (1, 'Another Journal'),
+            3: (3, 'A Third Journal'),
+            4: (3, "Another Library's Journal"),
+            5: (1, 'Some Case'),
+            6: (0, 'Some Other Case'),
+        }
+        for org_id, (record_count, org_name) in expected_results.items():
+            # Get CSV export output
+            csv_response: HttpResponse = self.get(
+                'user_management_manage_single_organization_export_user_list',
+                request_kwargs={'data': {'format': 'csv'}},
+                reverse_kwargs={'args': [org_id]},
+                user=self.admin_user,
+            )
+            self.assertEqual(csv_response.headers['Content-Type'], 'text/csv')
+
+            # Validate CSV output against expected results
+            csv_file = StringIO(csv_response.content.decode('utf8'))
+            reader = csv.DictReader(csv_file)
+            reader_record_count = 0
+            for record in reader:
+                self.assertEqual(record['organization_name'], org_name)
+                reader_record_count += 1
+            self.assertEqual(reader_record_count, record_count)
+
+            # Get JSON export output
+            json_response: JsonResponse = self.get(
+                'user_management_manage_single_organization_export_user_list',
+                request_kwargs={'data': {'format': 'json'}},
+                reverse_kwargs={'args': [org_id]},
+                user=self.admin_user,
+            )
+            self.assertEqual(json_response.headers['Content-Type'], 'application/json')
+
+            # Validate JSON output against expected results
+            reader = json.loads(json_response.content)
+            reader_record_count = 0
+            for record in reader:
+                self.assertEqual(record['organization_name'], org_name)
+                reader_record_count += 1
+            self.assertEqual(reader_record_count, record_count)
+
+    def test_organization_user_export_user_list(self):
+        expected_results = [
+            ('case_one_lawyer@firm.com', 'Some Case'),
+            ('multi_registrar_org_user@example.com', 'Another Journal'),
+            ('multi_registrar_org_user@example.com', "Another Library's Journal"),
+            ('multi_registrar_org_user@example.com', 'A Third Journal'),
+            ('multi_registrar_org_user@example.com', 'Test Journal'),
+            ('test_another_library_org_user@example.com', "Another Library's Journal"),
+            ('test_another_library_org_user@example.com', 'A Third Journal'),
+            ('test_yet_another_library_org_user@example.com', "Another Library's Journal"),
+            ('test_another_org_user@example.com', 'A Third Journal'),
+            ('test_org_rando_user@example.com', 'Test Journal'),
+            ('test_org_user@example.com', 'Test Journal'),
+        ]
+
+        # Get CSV export output
+        csv_response: HttpResponse = self.get(
+            'user_management_manage_organization_user_export_user_list',
+            request_kwargs={'data': {'format': 'csv'}},
+            user=self.admin_user,
+        )
+        self.assertEqual(csv_response.headers['Content-Type'], 'text/csv')
+
+        # Validate CSV output against expected results
+        csv_file = StringIO(csv_response.content.decode('utf8'))
+        reader = csv.DictReader(csv_file)
+        for index, record in enumerate(reader):
+            expected_email, expected_organization_name = expected_results[index]
+            self.assertEqual(record['email'], expected_email)
+            self.assertEqual(record['organization_name'], expected_organization_name)
+        self.assertEqual(index + 1, len(expected_results))
+
+        # Get JSON export output
+        json_response: HttpResponse = self.get(
+            'user_management_manage_organization_user_export_user_list',
+            request_kwargs={'data': {'format': 'json'}},
+            user=self.admin_user,
+        )
+        self.assertEqual(json_response.headers['Content-Type'], 'application/json')
+
+        # Validate JSON output against expected results
+        reader = json.loads(json_response.content)
+        for index, record in enumerate(reader):
+            expected_email, expected_organization_name = expected_results[index]
+            self.assertEqual(record['email'], expected_email)
+            self.assertEqual(record['organization_name'], expected_organization_name)
+        self.assertEqual(index + 1, len(expected_results))
+
+    def test_sponsored_user_export_user_list(self):
+        expected_results = [
+            ('another_inactive_sponsored_user@example.com', 'Another Library', 'inactive'),
+            ('another_sponsored_user@example.com', 'Another Library', 'active'),
+            ('another_sponsored_user@example.com', 'A Third Library', 'active'),
+            ('inactive_sponsored_user@example.com', 'Test Library', 'inactive'),
+            ('test_sponsored_user@example.com', 'Test Library', 'active'),
+        ]
+
+        # Get CSV export output
+        csv_response: HttpResponse = self.get(
+            'user_management_manage_sponsored_user_export_user_list',
+            request_kwargs={'data': {'format': 'csv'}},
+            user=self.admin_user,
+        )
+        self.assertEqual(csv_response.headers['Content-Type'], 'text/csv')
+
+        # Validate CSV output against expected results
+        csv_file = StringIO(csv_response.content.decode('utf8'))
+        reader = csv.DictReader(csv_file)
+        for index, record in enumerate(reader):
+            expected_email, expected_sponsoring_registrar, expected_sponsorship_status = expected_results[index]
+            self.assertEqual(record['email'], expected_email)
+            self.assertEqual(record['sponsoring_registrar'], expected_sponsoring_registrar)
+            self.assertEqual(record['sponsorship_status'], expected_sponsorship_status)
+        self.assertEqual(index + 1, len(expected_results))
+
+        # Get JSON export output
+        json_response: HttpResponse = self.get(
+            'user_management_manage_sponsored_user_export_user_list',
+            request_kwargs={'data': {'format': 'json'}},
+            user=self.admin_user,
+        )
+        self.assertEqual(json_response.headers['Content-Type'], 'application/json')
+
+        # Validate JSON output against expected results
+        reader = json.loads(json_response.content)
+        for index, record in enumerate(reader):
+            expected_email, expected_sponsoring_registrar, expected_sponsorship_status = expected_results[index]
+            self.assertEqual(record['email'], expected_email)
+            self.assertEqual(record['sponsoring_registrar'], expected_sponsoring_registrar)
+            self.assertEqual(record['sponsorship_status'], expected_sponsorship_status)
+        self.assertEqual(index + 1, len(expected_results))
 
     def test_sponsored_user_list_filters(self):
         # test assumptions: four users, with five sponsorships between them
@@ -448,13 +570,13 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.get('user_management_manage_single_organization',
                  user=self.registrar_user,
                  reverse_kwargs={'args': [self.unrelated_organization.pk]},
-                 require_status_code=404)
+                 require_status_code=403)
 
     def test_org_user_cannot_update_unrelated_organization(self):
         self.get('user_management_manage_single_organization',
                  user=self.organization_user,
                  reverse_kwargs={'args': [self.unrelated_organization.pk]},
-                 require_status_code=404)
+                 require_status_code=403)
 
     def _delete_organization(self, user, should_succeed=True):
         if should_succeed:
@@ -491,13 +613,13 @@ class UserManagementViewsTestCase(PermaTestCase):
     ### USER A/E/D VIEWS ###
 
     def test_user_list_filters(self):
-        # test assumptions: eight users
+        # test assumptions: nine users
         # - one aspiring court user, faculty user, journal user
         response = self.get('user_management_manage_user',
                              user=self.admin_user).content
         soup = BeautifulSoup(response, 'html.parser')
         count = soup.select('.sort-filter-count')[0].text
-        self.assertEqual("Found: 8 users", count)
+        self.assertEqual("Found: 9 users", count)
         self.assertEqual(response.count(b'Interested in a court account'), 1)
         self.assertEqual(response.count(b'Interested in a journal account'), 1)
         self.assertEqual(response.count(b'Interested in a faculty account'), 1)
@@ -540,7 +662,8 @@ class UserManagementViewsTestCase(PermaTestCase):
             'a-first_name':'First',
             'a-last_name':'Last',
         }
-        email = 'test_views_test@test.com'
+        email = self.randomize_capitalization('test_views_test@test.com')
+        normalized_email = email.lower()
 
         for view_name, form_extras in [
             ['registrar_user', {'a-registrar': 1}],
@@ -550,11 +673,12 @@ class UserManagementViewsTestCase(PermaTestCase):
         ]:
             # create user
             email += '1'
+            normalized_email += '1'
             self.submit_form('user_management_' + view_name + '_add_user',
-                           data=dict(list(base_user.items()) + list(form_extras.items()) + [['a-e-address', email]]),
+                           data=dict(list(base_user.items()) + list(form_extras.items()) + [['a-address', email]]),
                            success_url=reverse('user_management_manage_' + view_name),
-                           success_query=LinkUser.objects.filter(email=email))
-            new_user = LinkUser.objects.get(email=email)
+                           success_query=LinkUser.objects.filter(email=normalized_email, raw_email=email))
+            new_user = LinkUser.objects.get(email=normalized_email)
 
             # delete user (deactivate)
             new_user.is_confirmed = True
@@ -577,43 +701,127 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     ### ADDING NEW USERS TO ORGANIZATIONS ###
 
-    def test_admin_user_can_add_new_user_to_org(self):
-        self.log_in_user(self.admin_user)
+    def add_org_user(self):
+        email = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_email = email.lower()
         self.submit_form('user_management_organization_user_add_user',
                          data={'a-organizations': self.organization.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
-                         query_params={'email': 'doesnotexist@example.com'},
+                               'a-address': email},
+                         query_params={'email': email},
                          success_url=reverse('user_management_manage_organization_user'),
-                         success_query=LinkUser.objects.filter(email='doesnotexist@example.com',
-                                                               organizations=self.organization).exists())
+                         success_query=LinkUser.objects.filter(
+                             email=normalized_email,
+                             raw_email=email,
+                             organizations=self.organization
+                         ).exists())
 
+    def test_add_multiple_org_users_via_csv(self):
+        def create_csv_file(filename, content, encoding='utf-8'):
+            return SimpleUploadedFile(filename, content.encode(encoding), content_type='text/csv')
+
+        def initialize_form(csv_file, data=None):
+            data = {'organizations': selected_organization.pk, 'indefinite_affiliation': True}
+            return MultipleUsersFormWithOrganization(request=request, data=data, files={'csv_file': csv_file})
+
+        # --- initialize data ---
+        csv_data = 'first_name,last_name,email\nJohn,Doe,johndoe@example.com\nJane,Smith,janesmith@example.com'
+        another_csv_data = 'first_name,last_name,email\nJohn2,Doe,john2doe@example.com\nJane2,Smith,jane2smith@example.com'
+        invalid_csv_data = 'name\nJohn Doe'
+        another_invalid_csv_data = 'first_name,last_name,email\nJohn,Doe,\nJane,Smith,janesmith@example.com'
+        csv_data_to_normalize = 'first_name,last_name,email\rJohn,Doe,johndoe@example.com\rJane,Smith,janesmith@example.com'
+
+        valid_csv_file = create_csv_file('users.csv', csv_data)
+        another_valid_csv_file = create_csv_file('another_valid_users.csv', another_csv_data)
+        one_more_valid_csv_file = create_csv_file('one_more_valid_users.csv', csv_data)
+        invalid_csv_file = create_csv_file('invalid_users.csv', invalid_csv_data)
+        another_invalid_csv_file = create_csv_file('another_invalid_users.csv', another_invalid_csv_data)
+        csv_file_with_invalid_encoding = create_csv_file('users.csv', csv_data, 'utf-16')
+        blank_lines_csv_file = create_csv_file('blank_lines_users.csv', '\n\n')
+        normalized_line_endings_csv = create_csv_file('normalized_line_endings_users.csv', csv_data_to_normalize)
+
+        request = RequestFactory().get('/')
+        request.user = self.registrar_user
+        selected_organization = self.another_organization
+
+        # --- test form initialization ---
+        form = MultipleUsersFormWithOrganization(request=request)
+        # the registrar user has 3 organizations tied to it as verified in the users.json sample data
+        self.assertEqual(form.fields['organizations'].queryset.count(), 3)
+        # confirm that the first item in organization selection field matches the first organization of the registrar
+        self.assertEqual(form.fields['organizations'].queryset.first(), request.user.registrar.organizations
+                         .order_by('name').first())
+
+        # --- test csv validation ---
+        # valid csv
+        form1 = initialize_form(valid_csv_file)
+        self.assertTrue(form1.is_valid())
+
+        # invalid csv - missing headers
+        form2 = initialize_form(invalid_csv_file)
+        self.assertFalse(form2.is_valid())
+        self.assertTrue("CSV file must contain a header row with first_name, last_name and email columns."
+                        in form2.errors['csv_file'])
+
+        # invalid csv - missing email field
+        form3 = initialize_form(another_invalid_csv_file)
+        self.assertFalse(form3.is_valid())
+        self.assertTrue("Each row in the CSV file must contain email."
+                        in form3.errors['csv_file'])
+
+        # invalid csv - non utf-8 encoding
+        form4 = initialize_form(csv_file_with_invalid_encoding)
+        self.assertFalse(form4.is_valid())
+        self.assertTrue("CSV file must be encoded with UTF-8. Please save the file with UTF-8 encoding and try again."
+                        in form4.errors['csv_file'])
+
+        # invalid csv - blank lines only (fieldnames is [])
+        form5 = initialize_form(blank_lines_csv_file)
+        self.assertFalse(form5.is_valid())
+        self.assertTrue("CSV file must contain a header row with first_name, last_name and email columns."
+                        in form5.errors['csv_file'])
+
+        # valid csv with normalized line endings
+        form6 = initialize_form(normalized_line_endings_csv)
+        self.assertTrue(form6.is_valid())
+
+        # --- test user creation ---
+        self.assertTrue(form1.is_valid())
+        form1.save(commit=True)
+        created_user_ids = [user.id for user in form1.created_users.values()]
+        self.assertEqual(len(created_user_ids), 2)
+        self.assertEqual(UserOrganizationAffiliation.objects.filter(user_id__in=created_user_ids).count(), 2)
+
+        # --- test user update ---
+        existing_user = LinkUser.objects.create(email="john2doe@example.com", first_name="John2", last_name="Doe")
+        form4 = initialize_form(another_valid_csv_file)
+        self.assertTrue(form4.is_valid())
+        form4.save(commit=True)
+        self.assertEqual(len(form4.updated_users), 1)
+        self.assertTrue(existing_user in form4.updated_users.values())
+        self.assertEqual(len(form4.created_users), 1)
+        self.assertEqual(next(iter(form4.updated_users)), "john2doe@example.com")
+
+        # --- test validation errors ---
+        LinkUser.objects.filter(raw_email="johndoe@example.com").update(is_staff=True)
+        form5 = initialize_form(one_more_valid_csv_file)
+        self.assertTrue(form5.is_valid())
+        form5.save(commit=True)
+        self.assertEqual(len(form5.ineligible_users), 1)
+        self.assertEqual("johndoe@example.com", next(iter(form5.ineligible_users)))
+
+    def test_admin_user_can_add_new_user_to_org(self):
+        self.log_in_user(self.admin_user)
+        self.add_org_user()
 
     def test_registrar_user_can_add_new_user_to_org(self):
         self.log_in_user(self.registrar_user)
-        self.submit_form('user_management_organization_user_add_user',
-                         data={'a-organizations': self.organization.pk,
-                               'a-first_name': 'First',
-                               'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
-                         query_params={'email': 'doesnotexist@example.com'},
-                         success_url=reverse('user_management_manage_organization_user'),
-                         success_query=LinkUser.objects.filter(email='doesnotexist@example.com',
-                                                               organizations=self.organization).exists())
-
+        self.add_org_user()
 
     def test_org_user_can_add_new_user_to_org(self):
         self.log_in_user(self.organization_user)
-        self.submit_form('user_management_organization_user_add_user',
-                         data={'a-organizations': self.organization.pk,
-                               'a-first_name': 'First',
-                               'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
-                         query_params={'email': 'doesnotexist@example.com'},
-                         success_url=reverse('user_management_manage_organization_user'),
-                         success_query=LinkUser.objects.filter(email='doesnotexist@example.com',
-                                                               organizations=self.organization).exists())
+        self.add_org_user()
 
     def test_registrar_user_cannot_add_new_user_to_inaccessible_org(self):
         self.log_in_user(self.registrar_user)
@@ -621,7 +829,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                          data={'a-organizations': self.unrelated_organization.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
+                               'a-address': 'doesnotexist@example.com'},
                          query_params={'email': 'doesnotexist@example.com'},
                          error_keys=['organizations'])
         self.assertFalse(LinkUser.objects.filter(email='doesnotexist@example.com',
@@ -633,7 +841,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                          data={'a-organizations': self.unrelated_organization.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
+                               'a-address': 'doesnotexist@example.com'},
                          query_params={'email': 'doesnotexist@example.com'},
                          error_keys=['organizations'])
         self.assertFalse(LinkUser.objects.filter(email='doesnotexist@example.com',
@@ -641,29 +849,33 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     ### ADDING EXISTING USERS TO ORGANIZATIONS ###
 
-    def test_admin_user_can_add_existing_user_to_org(self):
-        self.log_in_user(self.admin_user)
+    def add_org_users(self):
+        # submit email with the same capitalization
         self.submit_form('user_management_organization_user_add_user',
                          data={'a-organizations': self.organization.pk},
                          query_params={'email': self.regular_user.email},
                          success_url=reverse('user_management_manage_organization_user'),
                          success_query=self.regular_user.organizations.filter(pk=self.organization.pk))
+
+        # submit email with a different capitalization
+        scrambled_email = self.randomize_capitalization(self.another_regular_user.email)
+        self.submit_form('user_management_organization_user_add_user',
+                         data={'a-organizations': self.organization.pk},
+                         query_params={'email': scrambled_email},
+                         success_url=reverse('user_management_manage_organization_user'),
+                         success_query=self.another_regular_user.organizations.filter(pk=self.organization.pk))
+
+    def test_admin_user_can_add_existing_user_to_org(self):
+        self.log_in_user(self.admin_user)
+        self.add_org_users()
 
     def test_registrar_user_can_add_existing_user_to_org(self):
         self.log_in_user(self.registrar_user)
-        self.submit_form('user_management_organization_user_add_user',
-                         data={'a-organizations': self.organization.pk},
-                         query_params={'email': self.regular_user.email},
-                         success_url=reverse('user_management_manage_organization_user'),
-                         success_query=self.regular_user.organizations.filter(pk=self.organization.pk))
+        self.add_org_users()
 
     def test_org_user_can_add_existing_user_to_org(self):
         self.log_in_user(self.organization_user)
-        self.submit_form('user_management_organization_user_add_user',
-                         data={'a-organizations': self.organization.pk},
-                         query_params={'email': self.regular_user.email},
-                         success_url=reverse('user_management_manage_organization_user'),
-                         success_query=self.regular_user.organizations.filter(pk=self.organization.pk))
+        self.add_org_users()
 
     def test_registrar_user_cannot_add_existing_user_to_inaccessible_org(self):
         self.log_in_user(self.registrar_user)
@@ -718,7 +930,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                           user=u,
                           data={},
                           reverse_kwargs={'args': [orgs[0].pk]},
-                          success_url=reverse('user_management_settings_affiliations'))
+                          success_url=reverse('settings_affiliations'))
 
         # returns to create/manage page if no longer a member of any orgs
         self.submit_form('user_management_organization_user_leave_organization',
@@ -734,6 +946,27 @@ class UserManagementViewsTestCase(PermaTestCase):
                           reverse_kwargs={'args': [orgs[1].pk]},
                           require_status_code=404)
 
+    def test_organization_name_is_escaped_in_leave_message(self):
+        user = LinkUser.objects.get(email='test_another_library_org_user@example.com')
+        organization = user.organizations.first()
+        payload = '<img src=x onerror=alert(1)>'
+        organization.name = payload
+        organization.save(update_fields=['name'])
+        self.log_in_user(user)
+
+        response = self.client.post(
+            reverse(
+                'user_management_organization_user_leave_organization',
+                args=[organization.pk],
+            ),
+            follow=True,
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, escape(payload))
+        self.assertNotContains(response, payload)
+
 
     ### REMOVING USERS FROM ORGANIZATIONS ###
 
@@ -747,14 +980,14 @@ class UserManagementViewsTestCase(PermaTestCase):
         # User from another registrar's org fails
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.another_unrelated_organization_user.pk]},
-                  require_status_code=404)
+                  require_status_code=403)
         # Repeat with the other registrar, to confirm we're
         # getting 404s because of permission reasons, not because the
         # test fixtures are broken.
         self.log_in_user(self.unrelated_registrar_user)
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.organization_user.pk]},
-                  require_status_code=404)
+                  require_status_code=403)
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.another_unrelated_organization_user.pk]})
 
@@ -769,15 +1002,13 @@ class UserManagementViewsTestCase(PermaTestCase):
         # User from another org fails
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.pk_from_email(org_two_users[0])]},
-                  require_status_code=404)
-        # Repeat in reverse, to confirm we're
-        # getting 404s because of permission reasons, not because the
-        # test fixtures are broken.
+                  require_status_code=403)
+
+        # Repeat with another org
         self.log_in_user(org_two_users[1])
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.pk_from_email(org_one_users[1])]},
-                  require_status_code=404)
-        # User from another org fails
+                  require_status_code=403)
         self.get('user_management_manage_single_organization_user',
                   reverse_kwargs={'args': [self.pk_from_email(org_two_users[0])]})
 
@@ -786,10 +1017,10 @@ class UserManagementViewsTestCase(PermaTestCase):
     def test_can_remove_user_from_organization(self):
         self.log_in_user(self.registrar_user)
         self.submit_form('user_management_manage_single_organization_user_remove',
-                         data={'org': self.organization.pk},
+                         data={'affiliation': self.user_organization_affiliation.pk},
                          reverse_kwargs={'args': [self.organization_user.pk]},
                          success_url=reverse('user_management_manage_organization_user'))
-        self.assertFalse(self.organization_user.organizations.filter(pk=self.organization.pk).exists())
+        self.assertFalse(self.organization_user.organizations.filter(pk=self.user_organization_affiliation.pk).exists())
 
     def test_registrar_cannot_remove_unrelated_user_from_organization(self):
         self.log_in_user(self.registrar_user)
@@ -808,26 +1039,92 @@ class UserManagementViewsTestCase(PermaTestCase):
     def test_can_remove_self_from_organization(self):
         self.log_in_user(self.organization_user)
         self.submit_form('user_management_manage_single_organization_user_remove',
-                         data={'org': self.organization.pk},
+                         data={'affiliation': self.user_organization_affiliation.pk},
                          reverse_kwargs={'args': [self.organization_user.pk]},
                          success_url=reverse('create_link'))
-        self.assertFalse(self.organization_user.organizations.filter(pk=self.organization.pk).exists())
+        self.assertFalse(self.organization_user.organizations.filter(pk=self.user_organization_affiliation.pk).exists())
+
+    ### MODIFYING ORG USER AFFILIATION EXPIRATION DATES ###
+
+    def test_admin_user_can_modify_affiliation_of_existing_org_user(self):
+        self.log_in_user(self.admin_user)
+        affiliation = UserOrganizationAffiliation.objects.get(user=self.organization_user, organization=self.organization)
+        affiliation.expires_at = datetime.strptime('2025-04-30T00:00:00+00:00', "%Y-%m-%dT%H:%M:%S%z")
+        affiliation.save()
+        self.submit_form('user_management_manage_single_organization_user_expiration_date',
+                         reverse_kwargs={'args': [self.organization_user.id, self.organization.id]},
+                         data={'expires_at': ''},
+                         success_url=reverse('user_management_manage_single_organization_user', args=[self.organization_user.id]))
+        affiliation.refresh_from_db()
+        self.assertEqual(affiliation.expires_at, None)
+
+    def test_registrar_user_can_modify_affiliation_of_existing_org_user(self):
+        # can only modify user affiliations if registrar is affiliated with the same org
+        self.log_in_user(self.registrar_user)
+        affiliation = UserOrganizationAffiliation.objects.get(user=self.organization_user, organization=self.organization)
+        expires_at = '2025-04-30T00:00:00+00:00'
+        self.submit_form('user_management_manage_single_organization_user_expiration_date',
+                         reverse_kwargs={'args': [self.organization_user.id, self.organization.id]},
+                         data={'expires_at': expires_at},
+                         success_url=reverse('user_management_manage_single_organization_user', args=[self.organization_user.id]))
+        affiliation.refresh_from_db()
+        self.assertEqual(affiliation.expires_at, datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%S%z"))
+
+        # cannot modify user affiliations if registrar isn't affiliated with the same org
+        self.log_in_user(self.registrar_user)
+        self.submit_form('user_management_manage_single_organization_user_expiration_date',
+                         reverse_kwargs={'args': [self.organization_user.id, self.unrelated_organization.id]},
+                         require_status_code=403)
+
+    def test_org_user_cannot_modify_unrelated_affiliation_of_shared_user(self):
+        target_user = self.regular_user
+        UserOrganizationAffiliation.objects.create(
+            user=target_user,
+            organization=self.organization,
+        )
+        unrelated_affiliation = UserOrganizationAffiliation.objects.create(
+            user=target_user,
+            organization=self.unrelated_organization,
+        )
+
+        self.assertTrue(self.organization_user.shares_scope_with_user(target_user))
+        self.assertFalse(
+            self.organization_user.can_edit_organization(self.unrelated_organization)
+        )
+        self.log_in_user(self.organization_user)
+
+        self.submit_form(
+            'user_management_manage_single_organization_user_expiration_date',
+            reverse_kwargs={
+                'args': [target_user.id, self.unrelated_organization.id]
+            },
+            data={'expires_at': '2027-04-30T00:00:00+00:00'},
+            require_status_code=403,
+        )
+
+        unrelated_affiliation.refresh_from_db()
+        self.assertIsNone(unrelated_affiliation.expires_at)
 
     ### ADDING NEW USERS TO REGISTRARS AS SPONSORED USERS ###
 
     def test_admin_user_can_add_new_sponsored_user_to_registrar(self):
-        address = 'doesnotexist@example.com'
+        address = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_address = address.lower()
         self.log_in_user(self.admin_user)
         self.submit_form('user_management_sponsored_user_add_user',
                           data={'a-sponsoring_registrars': self.registrar.pk,
                                 'a-first_name': 'First',
                                 'a-last_name': 'Last',
-                                'a-e-address': address},
+                                'a-address': address},
                           query_params={'email': address},
                           success_url=reverse('user_management_manage_sponsored_user'))
 
         # Check that everything is set up correctly (we'll do this once, here, and not repeat in other tests)
-        user = LinkUser.objects.get(email=address, sponsoring_registrars=self.registrar)
+        user = LinkUser.objects.get(
+            email=normalized_address,
+            raw_email=address,
+            sponsoring_registrars=self.registrar
+        )
         sponsorship = user.sponsorships.first()
         sponsored_folder = sponsorship.folders.get()
         self.assertEqual(sponsorship.status, 'active')
@@ -835,34 +1132,41 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertFalse(sponsored_folder.read_only)
 
         # Try to add the same person again; should fail
+        scrambled_email = self.randomize_capitalization(address)
         response = self.submit_form('user_management_sponsored_user_add_user',
                                      data={'a-sponsoring_registrars': self.registrar.pk,
                                            'a-first_name': 'First',
                                            'a-last_name': 'Last',
-                                           'a-e-address': address},
-                                     query_params={'email': address}).content
+                                           'a-address': scrambled_email},
+                                     query_params={'email': scrambled_email}).content
         self.assertIn(bytes("Select a valid choice. That choice is not one of the available choices", 'utf-8'), response)
 
     def test_registrar_user_can_add_new_sponsored_user_to_registrar(self):
-        address = 'doesnotexist@example.com'
+        address = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_address = address.lower()
         self.log_in_user(self.registrar_user)
         self.submit_form('user_management_sponsored_user_add_user',
                          data={'a-sponsoring_registrars': self.registrar.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': address},
+                               'a-address': address},
                          query_params={'email': address},
                          success_url=reverse('user_management_manage_sponsored_user'),
-                         success_query=LinkUser.objects.filter(email=address,
-                                                               sponsoring_registrars=self.registrar).exists())
+                         success_query=LinkUser.objects.filter(
+                             email=normalized_address,
+                             raw_email=address,
+                             sponsoring_registrars=self.registrar
+                         ).exists())
+
         # Try to add the same person again; should fail
+        scrambled_email = self.randomize_capitalization(address)
         response = self.submit_form('user_management_sponsored_user_add_user',
                                      data={'a-sponsoring_registrars': self.registrar.pk,
                                            'a-first_name': 'First',
                                            'a-last_name': 'Last',
-                                           'a-e-address': address},
-                                     query_params={'email': address}).content
-        self.assertIn(bytes("{} is already sponsored by your registrar.".format(address), 'utf-8'), response)
+                                           'a-address': scrambled_email},
+                                     query_params={'email': scrambled_email}).content
+        self.assertIn(bytes("{} is already sponsored by your registrar.".format(normalized_address), 'utf-8'), response)
 
     def test_registrar_user_cannot_add_sponsored_user_to_inaccessible_registrar(self):
         self.log_in_user(self.registrar_user)
@@ -870,7 +1174,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                          data={'a-sponsoring_registrars': self.unrelated_registrar.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
+                               'a-address': 'doesnotexist@example.com'},
                          query_params={'email': 'doesnotexist@example.com'},
                          error_keys=['sponsoring_registrars'])
         self.assertFalse(LinkUser.objects.filter(email='doesnotexist@example.com',
@@ -880,17 +1184,19 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     def test_admin_user_can_add_sponsorship_to_existing_user(self):
         self.log_in_user(self.admin_user)
+        scrambled_email = self.randomize_capitalization(self.regular_user.email)
         self.submit_form('user_management_sponsored_user_add_user',
                          data={'a-sponsoring_registrars': self.registrar.pk},
-                         query_params={'email': self.regular_user.email},
+                         query_params={'email': scrambled_email},
                          success_url=reverse('user_management_manage_sponsored_user'),
                          success_query=LinkUser.objects.filter(pk=self.regular_user.pk, sponsoring_registrars=self.registrar))
 
     def test_registrar_user_can_add_sponsorship_to_existing_user(self):
         self.log_in_user(self.registrar_user)
+        scrambled_email = self.randomize_capitalization(self.regular_user.email)
         self.submit_form('user_management_sponsored_user_add_user',
                          data={'a-sponsoring_registrars': self.registrar.pk},
-                         query_params={'email': self.regular_user.email},
+                         query_params={'email': scrambled_email},
                          success_url=reverse('user_management_manage_sponsored_user'),
                          success_query=LinkUser.objects.filter(pk=self.regular_user.pk, sponsoring_registrars=self.registrar))
 
@@ -901,6 +1207,41 @@ class UserManagementViewsTestCase(PermaTestCase):
                          query_params={'email': self.regular_user.email},
                          error_keys=['sponsoring_registrars'])
         self.assertFalse(LinkUser.objects.filter(pk=self.regular_user.pk, sponsoring_registrars=self.unrelated_registrar).exists())
+
+    ### MODIFYING SPONSORSHIPS ###
+
+    def test_admin_user_can_modify_sponsorship_of_existing_user(self):
+        self.log_in_user(self.admin_user)
+        sponsorship = Sponsorship.objects.get(user=self.sponsored_user, registrar=self.registrar, status='active')
+        sponsorship.expires_at = '2025-12-29'
+        sponsorship.save()
+        self.submit_form('user_management_manage_single_sponsored_user_expiration_date',
+                         reverse_kwargs={'args': [self.sponsored_user.id, self.registrar.id]},
+                         data={'expires_at': ''},
+                         success_url=reverse('user_management_manage_single_sponsored_user', args=[self.sponsored_user.id]),
+                         success_query=LinkUser.objects.filter(pk=self.regular_user.pk, sponsoring_registrars=self.registrar))
+        sponsorship.refresh_from_db()
+        self.assertEqual(sponsorship.expires_at, None)
+
+        
+    def test_registrar_user_can_modify_sponsorship_of_existing_affiliated_user(self):
+        # can only modify sponsorships affiliated with itself
+        self.log_in_user(self.registrar_user)
+        sponsorship = Sponsorship.objects.get(user=self.sponsored_user, registrar=self.registrar, status='active')
+        expires_at = '2025-04-30T00:00:00+00:00'
+        self.submit_form('user_management_manage_single_sponsored_user_expiration_date',
+                         reverse_kwargs={'args': [self.sponsored_user.id, self.registrar.id]},
+                         data={'expires_at': expires_at},
+                         success_url=reverse('user_management_manage_single_sponsored_user', args=[self.sponsored_user.id]),
+                         success_query=LinkUser.objects.filter(pk=self.regular_user.pk, sponsoring_registrars=self.registrar))
+        sponsorship.refresh_from_db()
+        self.assertEqual(sponsorship.expires_at, datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%S%z"))
+
+        # cannot modify sponsorships affiliated with another registrar
+        self.log_in_user(self.registrar_user)
+        self.submit_form('user_management_manage_single_sponsored_user_expiration_date',
+                         reverse_kwargs={'args': [self.sponsored_user.id, self.unrelated_registrar.pk]},
+                         require_status_code=403)
 
     ### TOGGLING THE STATUS OF SPONSORSHIPS ###
 
@@ -965,41 +1306,52 @@ class UserManagementViewsTestCase(PermaTestCase):
         sponsorship.refresh_from_db()
         self.assertEqual(sponsorship.status, 'inactive')
 
-    ### ADDING NEW USERS TO REGISTRARS AS REGISTRAR USERS) ###
+
+    ### ADDING NEW USERS TO REGISTRARS AS REGISTRAR USERS ###
 
     def test_admin_user_can_add_new_user_to_registrar(self):
-        address = 'doesnotexist@example.com'
+        address = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_address = address.lower()
         self.log_in_user(self.admin_user)
         self.submit_form('user_management_registrar_user_add_user',
                           data={'a-registrar': self.registrar.pk,
                                 'a-first_name': 'First',
                                 'a-last_name': 'Last',
-                                'a-e-address': address},
+                                'a-address': address},
                           query_params={'email': address},
                           success_url=reverse('user_management_manage_registrar_user'),
-                          success_query=LinkUser.objects.filter(email=address,
-                                                                registrar=self.registrar).exists())
+                          success_query=LinkUser.objects.filter(
+                              email=normalized_address,
+                              raw_email=address,
+                              registrar=self.registrar).exists()
+                         )
 
     def test_registrar_user_can_add_new_user_to_registrar(self):
-        address = 'doesnotexist@example.com'
+        address = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_address = address.lower()
         self.log_in_user(self.registrar_user)
         self.submit_form('user_management_registrar_user_add_user',
                          data={'a-registrar': self.registrar.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': address},
+                               'a-address': address},
                          query_params={'email': address},
                          success_url=reverse('user_management_manage_registrar_user'),
-                         success_query=LinkUser.objects.filter(email=address,
-                                                               registrar=self.registrar).exists())
+                         success_query=LinkUser.objects.filter(
+                             email=normalized_address,
+                             raw_email=address,
+                             registrar=self.registrar).exists()
+                         )
+
         # Try to add the same person again; should fail
+        scrambled_email = self.randomize_capitalization(address)
         response = self.submit_form('user_management_registrar_user_add_user',
                                      data={'a-registrar': self.registrar.pk,
                                            'a-first_name': 'First',
                                            'a-last_name': 'Last',
-                                           'a-e-address': address},
-                                     query_params={'email': address}).content
-        self.assertIn(bytes("{} is already a registrar user for your registrar.".format(address), 'utf-8'), response)
+                                           'a-address': scrambled_email},
+                                     query_params={'email': scrambled_email}).content
+        self.assertIn(bytes("{} is already a registrar user for your registrar.".format(normalized_address), 'utf-8'), response)
 
     def test_registrar_user_cannot_add_new_user_to_inaccessible_registrar(self):
         self.log_in_user(self.registrar_user)
@@ -1007,7 +1359,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                          data={'a-registrar': self.unrelated_registrar.pk,
                                'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
+                               'a-address': 'doesnotexist@example.com'},
                          query_params={'email': 'doesnotexist@example.com'},
                          error_keys=['registrar'])
         self.assertFalse(LinkUser.objects.filter(email='doesnotexist@example.com',
@@ -1015,21 +1367,29 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     ### ADDING EXISTING USERS TO REGISTRARS ###
 
-    def test_admin_user_can_add_existing_user_to_registrar(self):
-        self.log_in_user(self.admin_user)
+    def add_registrars(self):
+        # submit email with the same capitalization
         self.submit_form('user_management_registrar_user_add_user',
                          data={'a-registrar': self.registrar.pk},
                          query_params={'email': self.regular_user.email},
                          success_url=reverse('user_management_manage_registrar_user'),
                          success_query=LinkUser.objects.filter(pk=self.regular_user.pk, registrar=self.registrar))
 
-    def test_registrar_user_can_add_existing_user_to_registrar(self):
-        self.log_in_user(self.registrar_user)
+        # submit email with a different capitalization
+        scrambled_email = self.randomize_capitalization(self.another_regular_user.email)
         self.submit_form('user_management_registrar_user_add_user',
                          data={'a-registrar': self.registrar.pk},
-                         query_params={'email': self.regular_user.email},
+                         query_params={'email': scrambled_email},
                          success_url=reverse('user_management_manage_registrar_user'),
-                         success_query=LinkUser.objects.filter(pk=self.regular_user.pk, registrar=self.registrar))
+                         success_query=LinkUser.objects.filter(pk=self.another_regular_user.pk, registrar=self.registrar))
+
+    def test_admin_user_can_add_existing_user_to_registrar(self):
+        self.log_in_user(self.admin_user)
+        self.add_registrars()
+
+    def test_registrar_user_can_add_existing_user_to_registrar(self):
+        self.log_in_user(self.registrar_user)
+        self.add_registrars()
 
     def test_registrar_user_can_upgrade_org_user_to_registrar(self):
         self.log_in_user(self.registrar_user)
@@ -1099,21 +1459,27 @@ class UserManagementViewsTestCase(PermaTestCase):
     ### ADDING NEW USERS AS ADMINS ###
 
     def test_admin_user_can_add_new_user_as_admin(self):
+        address = self.randomize_capitalization('doesnotexist@example.com')
+        normalized_address = address.lower()
         self.log_in_user(self.admin_user)
         self.submit_form('user_management_admin_user_add_user',
                          data={'a-first_name': 'First',
                                'a-last_name': 'Last',
-                               'a-e-address': 'doesnotexist@example.com'},
-                         query_params={'email': 'doesnotexist@example.com'},
+                               'a-address': address},
+                         query_params={'email': address},
                          success_url=reverse('user_management_manage_admin_user'),
-                         success_query=LinkUser.objects.filter(email='doesnotexist@example.com',
-                                                               is_staff=True).exists())
+                         success_query=LinkUser.objects.filter(
+                             email=normalized_address,
+                             raw_email=address,
+                             is_staff=True).exists()
+                         )
+
     ### ADDING EXISTING USERS AS ADMINS ###
 
     def test_admin_user_can_add_existing_user_as_admin(self):
         self.log_in_user(self.admin_user)
         self.submit_form('user_management_admin_user_add_user',
-                         query_params={'email': self.regular_user.email},
+                         query_params={'email': self.randomize_capitalization(self.regular_user.email)},
                          success_url=reverse('user_management_manage_admin_user'),
                          success_query=LinkUser.objects.filter(pk=self.regular_user.pk, is_staff=True))
 
@@ -1135,617 +1501,6 @@ class UserManagementViewsTestCase(PermaTestCase):
                          success_url=reverse('create_link'))
         self.assertFalse(LinkUser.objects.filter(pk=self.admin_user.pk, is_staff=True).exists())
 
-    ### SETTINGS ###
-
-    def test_user_can_change_own_settings(self):
-        self.submit_form('user_management_settings_profile',
-                         user=self.admin_user,
-                         data={
-                             'a-first_name': 'Newfirst',
-                             'a-last_name': 'Newlast',
-                             'a-e-address': 'test_admin_user@example.com'
-                         },
-                         success_url=reverse('user_management_settings_profile'),
-                         success_query=LinkUser.objects.filter(first_name='Newfirst'))
-
-    def test_user_can_request_deletion_once(self):
-        deletion_url = reverse('user_management_delete_account')
-        self.assertNotIn('Requested account deletion', self.regular_user.notes)
-        response1 = self.get('user_management_settings_profile',
-                             user=self.regular_user).content
-        self.assertIn(bytes('<form method="post" action="{}"'.format(deletion_url), 'utf-8'), response1)
-        response2 = self.post('user_management_delete_account',
-                             user=self.regular_user,
-                             request_kwargs={"follow": True}).content
-        self.assertNotIn(bytes('<form method="post" action="{}"'.format(deletion_url), 'utf-8'), response2)
-        self.assertIn(b'Deletion Request Received', response2)
-        self.regular_user.refresh_from_db()
-        self.assertIn('Requested account deletion', self.regular_user.notes)
-        self.assertEqual(len(mail.outbox),1)
-        message = mail.outbox[0]
-        self.assertEqual(message.subject, 'Perma.cc account deletion request')
-
-    def test_edit_org_privacy(self):
-        '''
-            Can an authorized user change the privacy setting of an org?
-        '''
-
-        # Toggle as an org user
-        response = self.get('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                             user='test_org_user@example.com').content
-        self.assertIn(b"Your Perma Links are currently <strong>Public</strong> by default.", response)
-        self.submit_form('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                          user='test_org_user@example.com',
-                          data={},
-                          success_url=reverse('user_management_settings_affiliations'))
-        response = self.get('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                             user='test_org_user@example.com').content
-        self.assertIn(b"Your Perma Links are currently <strong>Private</strong> by default.", response)
-
-        # Toggle as a registrar user
-        self.submit_form('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                  user='test_registrar_user@example.com',
-                  data={},
-                  success_url=reverse('user_management_manage_organization'))
-        response = self.get('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                             user='test_registrar_user@example.com').content
-        self.assertIn(b"Your Perma Links are currently <strong>Public</strong> by default.", response)
-
-        # Toggle as a staff user
-        self.submit_form('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                  user='test_admin_user@example.com',
-                  data={},
-                  success_url=reverse('user_management_manage_organization'))
-        response = self.get('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[1]},
-                             user='test_admin_user@example.com').content
-        self.assertIn(b"Your Perma Links are currently <strong>Private</strong> by default.", response)
-
-        # As staff, try to access non-existent org
-        self.get('user_management_settings_organizations_change_privacy', reverse_kwargs={'args':[99999]},
-                  user='test_admin_user@example.com',
-                  require_status_code=404)
-
-
-    # Subscription, Individuals (except registrar users)
-
-    def test_nonpaying_user_cannot_see_usage_plan_page(self):
-        u = LinkUser.objects.get(email='test_nonpaying_user@example.com')
-        assert not u.can_view_usage_plan()
-        self.get('user_management_settings_usage_plan',
-                  user=u,
-                  require_status_code=403)
-
-    def test_regular_user_can_see_usage_plan_page(self):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        assert u.can_view_usage_plan()
-        self.get('user_management_settings_usage_plan',
-                  user=u,
-                  require_status_code=200)
-
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_no_purchase_history_section_if_no_one_time_purchases(self, get_purchase_history, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        get_subscription.return_value = None
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        self.assertNotIn(b'Purchase History', r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_purchase_history_present_if_one_time_purchases(self, get_purchase_history, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        get_subscription.return_value = None
-        get_purchase_history.return_value = {
-            'purchases': [
-                {'link_quantity': 10, 'date': GENESIS},
-                {'link_quantity': 3, 'date': GENESIS}
-            ],
-            'total_links': 13
-        }
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        self.assertIn(b'Purchase History', r.content)
-        self.assertIn(b'10 Links', r.content)
-        self.assertIn(b'3 Links', r.content)
-        self.assertIn(b'13 Links', r.content)
-        self.assertIn(b'January 1, 1970', r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_subscribe_form_if_no_standing_subscription(self, get_purchase_history, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        get_subscription.return_value = None
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        individual_tier_count = len(settings.TIERS['Individual'])
-        bonus_package_count = len(settings.BONUS_PACKAGES)
-        self.assertIn(b'Get More Personal Links', r.content)
-        self.assertIn(b'Purchase a personal subscription', r.content)
-        self.assertIn(b'<form class="purchase-form', r.content, bonus_package_count)
-        self.assertIn(b'<form class="upgrade-form', r.content, individual_tier_count)
-        self.assertIn(b'<input type="hidden" name="encrypted_data"', r.content, individual_tier_count + bonus_package_count)
-        self.assertIn(prepped.return_value, r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_update_button_cancel_button_and_subscription_info_present_if_standing_subscription(self, get_purchase_history, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_current_monthly_subscription()
-        get_subscription.return_value = subscription
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        self.assertIn(b'Rate', r.content)
-        self.assertIn(b'Paid Through', r.content)
-        self.assertIn(bytes(subscription['status'].lower(), 'utf-8'), r.content)
-        self.assertIn(b'Modify Subscription', r.content)
-        self.assertContains(r, '<input type="hidden" name="account_type"', 2)
-        self.assertIn(b'Cancel Subscription', r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_help_present_if_subscription_on_hold(self, get_purchase_history, get_subscription):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_on_hold_monthly_subscription()
-        get_subscription.return_value = subscription
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        self.assertIn(b'problem with your credit card', r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_cancellation_info_present_if_cancellation_requested(self, get_purchase_history, get_subscription):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_cancellation_requested_subscription()
-        get_subscription.return_value = subscription
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        bonus_package_count = len(settings.BONUS_PACKAGES)
-        self.assertIn(b'Get More Personal Links', r.content)
-        self.assertIn(b'<input type="hidden" name="encrypted_data"', r.content, bonus_package_count)
-        self.assertIn(b'received the request to cancel', r.content)
-        get_subscription.assert_called_once_with(u)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_apology_page_displayed_if_perma_payments_is_down(self, get_subscription):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        get_subscription.side_effect = PermaPaymentsCommunicationException
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        self.assertNotIn(b'<input type="hidden" name="encrypted_data"', r.content)
-        self.assertIn(b'is currently unavailable', r.content)
-        get_subscription.assert_called_once_with(u)
-
-    def test_unauthorized_user_cannot_see_cancellation_page(self):
-        u = LinkUser.objects.get(email='test_nonpaying_user@example.com')
-        assert not u.can_view_usage_plan()
-        self.post('user_management_settings_subscription_cancel',
-                  user=u,
-                  require_status_code=403)
-
-
-    def test_authorized_user_cant_use_get_for_cancellation_page(self):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        assert u.can_view_usage_plan()
-        self.get('user_management_settings_subscription_cancel',
-                  user=u,
-                  require_status_code=405)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_authorized_user_cancellation_confirm_form(self, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        assert u.can_view_usage_plan()
-        subscription = spoof_current_monthly_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_cancel',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertIn(b'<input type="hidden" name="encrypted_data"', r.content)
-        self.assertIn(prepped.return_value, r.content)
-        self.assertIn(b'Are you sure you want to cancel', r.content)
-
-        get_subscription.assert_called_once_with(u)
-
-
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_update_page_if_no_standing_subscription(self, get_subscription):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        get_subscription.return_value = None
-
-        self.post('user_management_settings_subscription_update',
-                  user=u,
-                  data={'account_type':'Individual'},
-                  require_status_code=403)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_update_page_if_standing_subscription(self, get_subscription, prepped, prepped_v):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_current_monthly_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-        prepped_v.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        # Should be able to up/downgrade to all monthly individual tiers, except the current tier
-        available_tiers = len([tier for tier in settings.TIERS['Individual'] if tier['period'] == 'monthly']) - 1
-
-        self.assertContains(r, 'Update Credit Card Information')
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', 1)
-        self.assertContains(r, 'Change Plan')
-        self.assertNotContains(r, 'Cancel Scheduled Downgrade')
-        self.assertContains(r, '<input required type="radio" name="encrypted_data"', available_tiers)
-        self.assertContains(r, prepped.return_value, available_tiers + 1)
-        get_subscription.assert_called_once_with(u)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_update_page_if_downgrade_scheduled(self, get_subscription, prepped, prepped_v):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_current_monthly_subscription_with_scheduled_downgrade()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-        prepped_v.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertContains(r, 'Update Credit Card Information')
-        self.assertContains(r, 'Cancel Scheduled Downgrade')
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', 2)
-        self.assertNotContains(r, '<input required type="radio" name="encrypted_data"')
-        self.assertContains(r, prepped.return_value, 2)
-        get_subscription.assert_called_once_with(u)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_update_page_if_subscription_on_hold(self, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_on_hold_monthly_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertContains(r, 'Update Credit Card Information')
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', 1)
-        self.assertContains(r, prepped.return_value, 1)
-        self.assertNotContains(r, 'Change Plan')
-        get_subscription.assert_called_once_with(u)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_update_page_if_cancellation_requested(self, get_subscription, prepped):
-        u = LinkUser.objects.get(email='test_user@example.com')
-        subscription = spoof_cancellation_requested_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertContains(r, 'Update Credit Card Information')
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', 1)
-        self.assertContains(r, prepped.return_value, 1)
-        self.assertNotContains(r, 'Change Plan')
-        get_subscription.assert_called_once_with(u)
-
-
-    # Subscription, Registrar Users
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_registrar_user_nonpaying_registrar(self, get_purchase_history, get_subscription_u, get_subscription_r, prepped):
-        u = LinkUser.objects.get(email='test_registrar_user@example.com')
-        get_subscription_u.return_value = None
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        # Individual tiers should be available; no registrar section should be present
-
-        individual_tier_count = len(settings.TIERS['Individual'])
-        bonus_package_count = len(settings.BONUS_PACKAGES)
-        self.assertIn(b'Get More Personal Links', r.content)
-        self.assertIn(b'Purchase a personal subscription', r.content)
-        self.assertNotIn(b'Purchase a subscription for Test Firm', r.content)
-        self.assertContains(r, '<form class="purchase-form', bonus_package_count)
-        self.assertContains(r, '<form class="upgrade-form', individual_tier_count)
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', individual_tier_count + bonus_package_count)
-        self.assertContains(r, prepped.return_value, individual_tier_count + bonus_package_count)
-
-        get_subscription_u.assert_called_once_with(u)
-        self.assertEqual(get_subscription_r.call_count, 0)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_allpaying_registrar_user_sees_both_subscribe_forms(self, get_purchase_history, get_subscription_u, get_subscription_r, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        get_subscription_u.return_value = None
-        get_subscription_r.return_value = None
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        # all tiers should be offered, both individual and registrar-level
-        tier_count = len(settings.TIERS['Individual']) + len(settings.TIERS['Registrar'])
-        bonus_package_count = len(settings.BONUS_PACKAGES)
-        self.assertIn(b'Get More Personal Links', r.content)
-        self.assertIn(b'Purchase a personal subscription', r.content)
-        self.assertIn(b'Purchase a subscription for Test Firm', r.content)
-        self.assertContains(r, '<form class="purchase-form', bonus_package_count)
-        self.assertContains(r, '<form class="upgrade-form', tier_count)
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', tier_count + bonus_package_count)
-        self.assertContains(r, prepped.return_value, tier_count + bonus_package_count)
-        get_subscription_u.assert_called_once_with(u)
-        get_subscription_r.assert_called_once_with(u.registrar)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.models.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_purchase_history', autospec=True)
-    def test_allpaying_registrar_user_sees_subscriptions_independently(self, get_purchase_history, get_subscription_u, get_subscription_r, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        get_subscription_u.return_value = None
-        subscription = spoof_current_monthly_subscription()
-        get_subscription_r.return_value = subscription
-        get_purchase_history.return_value = {'purchases': [], 'total_links': 0}
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.get('user_management_settings_usage_plan',
-                      user=u)
-
-        # Individual tiers should be available; the registrar's subscription should be present
-
-        individual_tier_count = len(settings.TIERS['Individual'])
-        bonus_package_count = len(settings.BONUS_PACKAGES)
-        self.assertIn(b'Get More Personal Links', r.content)
-        self.assertIn(b'Purchase a personal subscription', r.content)
-        self.assertNotIn(b'Purchase a subscription for Test Firm', r.content)
-        self.assertContains(r, '<form class="purchase-form', bonus_package_count)
-        self.assertContains(r, '<form class="upgrade-form', individual_tier_count)
-        self.assertContains(r, '<input type="hidden" name="encrypted_data"', individual_tier_count + bonus_package_count)
-        self.assertContains(r, prepped.return_value, individual_tier_count+ bonus_package_count)
-
-        self.assertIn(b'Rate', r.content)
-        self.assertIn(b'Paid Through', r.content)
-        self.assertIn(bytes(subscription['status'].lower(), 'utf-8'), r.content)
-        self.assertIn(b'Modify Subscription', r.content)
-        self.assertContains(r, '<input type="hidden" name="account_type"', 2)
-        self.assertIn(b'Cancel Subscription', r.content)
-
-        get_subscription_u.assert_called_once_with(u)
-        get_subscription_r.assert_called_once_with(u.registrar)
-        get_purchase_history.assert_called_once_with(u)
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_allpaying_registrar_user_personal_cancellation_confirm_form(self, get_subscription_u, get_subscription_r, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        assert u.can_view_usage_plan()
-        subscription = spoof_current_monthly_subscription()
-        get_subscription_u.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_cancel',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertIn(b'<input type="hidden" name="encrypted_data"', r.content)
-        self.assertIn(prepped.return_value, r.content)
-        self.assertIn(b'Are you sure you want to cancel', r.content)
-        self.assertNotIn(b'Test Firm', r.content)
-        self.assertIn(b'personal', r.content)
-
-        get_subscription_u.assert_called_once_with(u)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_allpaying_registrar_user_institutional_cancellation_confirm_form(self, get_subscription_u, get_subscription_r, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        assert u.can_view_usage_plan()
-        subscription = spoof_current_monthly_subscription()
-        get_subscription_r.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_cancel',
-                      user=u,
-                      data={'account_type':'Registrar'})
-
-        self.assertIn(b'<input type="hidden" name="encrypted_data"', r.content)
-        self.assertIn(prepped.return_value, r.content)
-        self.assertIn(b'Are you sure you want to cancel', r.content)
-        self.assertIn(b'Test Firm', r.content)
-        self.assertNotIn(b'Personal', r.content)
-
-        get_subscription_r.assert_called_once_with(u.registrar)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.LinkUser.get_subscription', autospec=True)
-    def test_allpaying_registrar_user_personal_update_form(self, get_subscription, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        assert u.can_view_usage_plan()
-        subscription = spoof_current_monthly_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Individual'})
-
-        self.assertNotIn(b'Test Firm', r.content)
-        self.assertIn(b'Personal', r.content)
-        get_subscription.assert_called_once_with(u)
-
-
-    @patch('perma.views.user_management.prep_for_perma_payments', autospec=True)
-    @patch('perma.models.Registrar.get_subscription', autospec=True)
-    def test_allpaying_registrar_user_institutional_update_form(self, get_subscription, prepped):
-        u = LinkUser.objects.get(email='registrar_user@firm.com')
-        assert u.can_view_usage_plan()
-        subscription = spoof_current_monthly_subscription()
-        get_subscription.return_value = subscription
-        prepped.return_value = bytes(str(sentinel.prepped), 'utf-8')
-
-
-        r = self.post('user_management_settings_subscription_update',
-                      user=u,
-                      data={'account_type':'Registrar'})
-
-        self.assertIn(b'Test Firm', r.content)
-        self.assertNotIn(b'personal', r.content)
-        get_subscription.assert_called_once_with(u.registrar)
-
-
-    # Tools
-
-    def test_api_key(self):
-        response = self.get('user_management_settings_tools',
-                             user='test_another_library_org_user@example.com').content
-        self.assertNotIn(b'id="id_api_key"', response)
-        self.submit_form('api_key_create',
-                          user='test_another_library_org_user@example.com',
-                          data={},
-                          success_url=reverse('user_management_settings_tools'))
-        response = self.get('user_management_settings_tools',
-                             user='test_another_library_org_user@example.com').content
-        soup = BeautifulSoup(response, 'html.parser')
-        key = soup.find('input', {'id': 'id_api_key'})
-        val = key.get('value', '')
-        self.assertTrue(val)
-        # do it again, and make sure the key changes
-        self.submit_form('api_key_create',
-                          user='test_another_library_org_user@example.com',
-                          data={},
-                          success_url=reverse('user_management_settings_tools'))
-        response = self.get('user_management_settings_tools',
-                             user='test_another_library_org_user@example.com').content
-        soup = BeautifulSoup(response, 'html.parser')
-        key = soup.find('input', {'id': 'id_api_key'})
-        new_val = key.get('value', '')
-        self.assertTrue(new_val)
-        self.assertFalse(val == new_val)
-
-    # Affiliations
-    def test_affiliations(self):
-        '''
-            Does the expected information show up on the affliations page?
-            (Tries not to be overly picky about the page design and markup.)
-        '''
-        # As an org user
-        response = self.get('user_management_settings_affiliations',
-                             user='multi_registrar_org_user@example.com').content
-        soup = BeautifulSoup(response, 'html.parser')
-        registrars = soup.select('h4 a')
-        self.assertEqual(len(registrars), 2)
-        for registrar in registrars:
-            self.assertTrue(registrar.text.strip())
-        orgs = soup.select('.settings-block p')
-        self.assertEqual(len(orgs), 4)
-        for org in orgs:
-            self.assertTrue(org.text.strip())
-
-        # As a registrar user
-        response = self.get('user_management_settings_affiliations',
-                             user='test_registrar_user@example.com').content
-        soup = BeautifulSoup(response, 'html.parser')
-        registrars = soup.select('h4')
-        self.assertEqual(len(registrars), 1)
-        for registrar in registrars:
-            self.assertTrue(registrar.text.strip())
-        settings = soup.select('dt')
-        self.assertEqual(len(settings), 2)
-        for setting in settings:
-            self.assertTrue(org.text.strip())
-
-        # As a pending registrar user
-        response = self.get('user_management_settings_affiliations',
-                             user='test_requested_registrar_account@example.com').content
-        self.assertIn(b'Pending Registrar', response)
-        self.assertIn(b'Thank you for requesting an account for your library. Perma.cc will review your request as soon as possible.', response)
-        soup = BeautifulSoup(response, 'html.parser')
-        registrars = soup.select('.sponsor-name')
-        self.assertEqual(len(registrars), 1)
-        for registrar in registrars:
-            self.assertTrue(registrar.text.strip())
-        settings = soup.select('dt')
-        self.assertEqual(len(settings), 2)
-        for setting in settings:
-            self.assertTrue(org.text.strip())
-
 
     ###
     ### SIGNUP
@@ -1762,7 +1517,9 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     def new_lib_user(self):
         rand = random()
-        return { 'email': 'user{}@university.org'.format(rand),
+        email = self.randomize_capitalization('user{}@university.org'.format(rand))
+        return { 'raw_email': email,
+                 'normalized_email': email.lower(),
                  'first': 'Joe',
                  'last': 'Yacobówski' }
 
@@ -1775,7 +1532,7 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertEqual(website_label.text, "Library website")
 
     def check_lib_user_labels(self, soup):
-        email_label = soup.find('label', {'for': 'id_a-e-address'})
+        email_label = soup.find('label', {'for': 'id_a-address'})
         self.assertEqual(email_label.text, "Your email")
 
     def check_lib_email(self, message, new_lib, user):
@@ -1784,16 +1541,17 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertIn(new_lib['name'], message.body)
         self.assertIn(new_lib['email'], message.body)
 
-        self.assertIn(user['email'], message.body)
+        self.assertIn(user['raw_email'], message.body)
 
         id = Registrar.objects.get(email=new_lib['email']).id
-        approve_url = "http://testserver{}".format(reverse('user_management_approve_pending_registrar', args=[id]))
+        approve_url = "http://testserver{}".format(reverse('user_sign_up_approve_pending_registrar', args=[id]))
         self.assertIn(approve_url, message.body)
-        self.assertEqual(message.subject, "Perma.cc new library registrar account request")
+        self.assertTrue(message.subject.startswith("Perma.cc new library registrar account request"))
         self.assertEqual(message.from_email, our_address)
         self.assertEqual(message.recipients(), [our_address])
-        self.assertDictEqual(message.extra_headers, {'Reply-To': user['email']})
+        self.assertDictEqual(message.extra_headers, {'Reply-To': user['raw_email']})
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_library_render(self):
         '''
            Does the library signup form display as expected?
@@ -1803,14 +1561,14 @@ class UserManagementViewsTestCase(PermaTestCase):
 
         # Registrar and user forms are displayed,
         # inputs are blank, and labels are customized as expected
-        response = self.get('libraries').content
+        response = self.get('sign_up_libraries').content
         soup = BeautifulSoup(response, 'html.parser')
         self.check_library_labels(soup)
         self.check_lib_user_labels(soup)
         inputs = soup.select('input')
         self.assertEqual(len(inputs), 9)
         for input in inputs:
-            if input['name'] in ['csrfmiddlewaretoken', 'telephone']:
+            if input['name'] in ['csrfmiddlewaretoken', 'email_confirmation']:
                 self.assertTrue(input.get('value', ''))
             else:
                 self.assertFalse(input.get('value', ''))
@@ -1824,19 +1582,19 @@ class UserManagementViewsTestCase(PermaTestCase):
                                     'b-website': new_lib['website'],
                                     'b-name': new_lib['name'],
                                     'b-address': new_lib['address'],
-                                    'a-e-address': new_lib_user['email'],
+                                    'a-address': new_lib_user['raw_email'],
                                     'a-first_name': new_lib_user['first'],
                                     'a-last_name': new_lib_user['last'],
                                     'csrfmiddlewaretoken': '11YY3S2DgOw2DHoWVEbBArnBMdEA2svu' }
         session.save()
-        response = self.get('libraries').content
+        response = self.get('sign_up_libraries').content
         soup = BeautifulSoup(response, 'html.parser')
         self.check_library_labels(soup)
         self.check_lib_user_labels(soup)
         inputs = soup.select('input')
         self.assertEqual(len(inputs), 9)
         for input in inputs:
-            if input['name'] in ['csrfmiddlewaretoken', 'telephone']:
+            if input['name'] in ['csrfmiddlewaretoken', 'email_confirmation']:
                 self.assertTrue(input.get('value', ''))
             elif input['name'][:2] == "b-":
                 self.assertTrue(input.get('value', ''))
@@ -1844,7 +1602,7 @@ class UserManagementViewsTestCase(PermaTestCase):
                 self.assertFalse(input.get('value', ''))
 
         # If there's an unsuccessful submission, field labels are still as expected.
-        response = self.post('libraries').content
+        response = self.post('sign_up_libraries').content
         soup = BeautifulSoup(response, 'html.parser')
         self.check_library_labels(soup)
         self.check_lib_user_labels(soup)
@@ -1853,7 +1611,7 @@ class UserManagementViewsTestCase(PermaTestCase):
 
         # Registrar form is displayed, but user form is not,
         # inputs are blank, and labels are still customized as expected
-        response = self.get('libraries', user="test_user@example.com").content
+        response = self.get('sign_up_libraries', user="test_user@example.com").content
         soup = BeautifulSoup(response, 'html.parser')
         self.check_library_labels(soup)
         inputs = soup.select('input')
@@ -1865,6 +1623,7 @@ class UserManagementViewsTestCase(PermaTestCase):
             else:
                 self.assertFalse(input.get('value', ''))
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_library_submit_success(self):
         '''
            Does the library signup form submit as expected? Success cases.
@@ -1874,61 +1633,66 @@ class UserManagementViewsTestCase(PermaTestCase):
         # Not logged in, submit all fields sans first and last name
         new_lib = self.new_lib()
         new_lib_user = self.new_lib_user()
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = { 'b-email': new_lib['email'],
                                    'b-website': new_lib['website'],
                                    'b-name': new_lib['name'],
-                                   'a-e-address': new_lib_user['email'] },
+                                   'a-address': new_lib_user['raw_email'] },
                           success_url=reverse('register_library_instructions'))
         expected_emails_sent += 2
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_lib_email(mail.outbox[expected_emails_sent - 2], new_lib, new_lib_user)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_lib_user['email'])
+        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_lib_user['raw_email'])
 
         # Not logged in, submit all fields including first and last name
         new_lib = self.new_lib()
         new_lib_user = self.new_lib_user()
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = { 'b-email': new_lib['email'],
                                    'b-website': new_lib['website'],
                                    'b-name': new_lib['name'],
-                                   'a-e-address': new_lib_user['email'],
+                                   'a-address': new_lib_user['raw_email'],
                                    'a-first_name': new_lib_user['first'],
                                    'a-last_name': new_lib_user['last']},
                           success_url=reverse('register_library_instructions'))
         expected_emails_sent += 2
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_lib_email(mail.outbox[expected_emails_sent - 2], new_lib, new_lib_user)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_lib_user['email'])
+        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_lib_user['raw_email'])
 
         # Logged in
         new_lib = self.new_lib()
-        existing_lib_user = { 'email': 'test_user@example.com'}
-        self.submit_form('libraries',
+        existing_lib_user = {
+            'raw_email': 'test_user@example.com',
+            'normalized_email': 'test_user@example.com',
+        }
+        self.submit_form('sign_up_libraries',
                           data = { 'b-email': new_lib['email'],
                                    'b-website': new_lib['website'],
                                    'b-name': new_lib['name'] },
-                          success_url=reverse('user_management_settings_affiliations'),
-                          user=existing_lib_user['email'])
+                          success_url=reverse('settings_affiliations'),
+                          user=existing_lib_user['raw_email'])
         expected_emails_sent += 1
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_lib_email(mail.outbox[expected_emails_sent - 1], new_lib, existing_lib_user)
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_library_form_honeypot(self):
         new_lib = self.new_lib()
         new_lib_user = self.new_lib_user()
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = { 'b-email': new_lib['email'],
                                    'b-website': new_lib['website'],
                                    'b-name': new_lib['name'],
-                                   'a-e-address': new_lib_user['email'],
+                                   'a-address': new_lib_user['raw_email'],
                                    'a-first_name': new_lib_user['first'],
                                    'a-last_name': new_lib_user['last'],
-                                   'a-telephone': "I'm a bot."},
+                                   'a-email_confirmation': "I'm a bot."},
                           success_url=reverse('register_library_instructions'))
         self.assertEqual(len(mail.outbox), 0)
         self.assertFalse(Registrar.objects.filter(name=new_lib['name']).exists())
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_library_submit_failure(self):
         '''
            Does the library signup form submit as expected? Failures.
@@ -1939,14 +1703,14 @@ class UserManagementViewsTestCase(PermaTestCase):
         # Not logged in, blank submission reports correct fields required
         # ('email' catches both registrar and user email errors, unavoidably,
         # so test with just that missing separately)
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = {},
                           form_keys = ['registrar_form', 'user_form'],
                           error_keys = ['website', 'name', 'email'])
         self.assertEqual(len(mail.outbox), 0)
 
         # (checking user email missing separately)
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = {'b-email': new_lib['email'],
                                   'b-website': new_lib['website'],
                                   'b-name': new_lib['name']},
@@ -1958,19 +1722,19 @@ class UserManagementViewsTestCase(PermaTestCase):
         data = {'b-email': new_lib['email'],
                 'b-website': new_lib['website'],
                 'b-name': new_lib['name'],
-                'a-e-address': existing_lib_user['email']}
-        self.submit_form('libraries',
+                'a-address': self.randomize_capitalization(existing_lib_user['email'])}
+        self.submit_form('sign_up_libraries',
                           data = data,
                           form_keys = ['registrar_form', 'user_form'],
                           success_url = '/login?next=/libraries/')
         self.assertDictEqual(self.client.session['request_data'], data)
         self.assertEqual(len(mail.outbox), 0)
 
-        # Not logged in, registrar apepars to exist already
+        # Not logged in, registrar appears to exist already
         # (actually, this doesn't currently fail)
 
         # Logged in, blank submission reports all fields required
-        self.submit_form('libraries',
+        self.submit_form('sign_up_libraries',
                           data = {},
                           user = existing_lib_user['email'],
                           error_keys = ['website', 'name', 'email'])
@@ -1987,7 +1751,9 @@ class UserManagementViewsTestCase(PermaTestCase):
 
     def new_court_user(self):
         rand = random()
-        return { 'email': 'user{}@university.org'.format(rand),
+        email = self.randomize_capitalization('user{}@university.org'.format(rand))
+        return { 'raw_email': email,
+                 'normalized_email': email.lower(),
                  'first': 'Joe',
                  'last': 'Yacobówski' }
 
@@ -1995,11 +1761,12 @@ class UserManagementViewsTestCase(PermaTestCase):
         our_address = settings.DEFAULT_FROM_EMAIL
 
         # Doesn't check email contents yet; too many variations possible presently
-        self.assertEqual(message.subject, "Perma.cc new library court account information request")
+        self.assertTrue(message.subject.startswith("Perma.cc new library court account information request"))
         self.assertEqual(message.from_email, our_address)
         self.assertEqual(message.recipients(), [our_address])
         self.assertDictEqual(message.extra_headers, {'Reply-To': court_email})
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_court_success(self):
         '''
             Does the court signup form submit as expected? Success cases.
@@ -2012,18 +1779,9 @@ class UserManagementViewsTestCase(PermaTestCase):
 
         # NOT LOGGED IN
 
-        # Existing user's email address, no court info
-        # (currently succeeds, should probably fail; see issue 1746)
-        self.submit_form('sign_up_courts',
-                          data = { 'e-address': existing_user['email']},
-                          success_url = reverse('court_request_response'))
-        expected_emails_sent += 1
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_court_email(mail.outbox[expected_emails_sent - 1], existing_user['email'])
-
         # Existing user's email address + court info
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': existing_user['email'],
+                          data = { 'address': self.randomize_capitalization(existing_user['email']),
                                    'requested_account_note': new_court['requested_account_note']},
                           success_url = reverse('court_request_response'))
         expected_emails_sent += 1
@@ -2032,23 +1790,23 @@ class UserManagementViewsTestCase(PermaTestCase):
 
         # New user email address, don't create account
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': new_user['email'],
+                          data = { 'address': new_user['raw_email'],
                                    'requested_account_note': new_court['requested_account_note']},
                           success_url = reverse('court_request_response'))
         expected_emails_sent += 1
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
+        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['raw_email'])
 
         # New user email address, create account
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': new_user['email'],
+                          data = { 'address': new_user['raw_email'],
                                    'requested_account_note': new_court['requested_account_note'],
                                    'create_account': True },
                           success_url = reverse('register_email_instructions'))
         expected_emails_sent += 2
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['email'])
-        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
+        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['raw_email'])
+        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['raw_email'])
 
         # LOGGED IN
 
@@ -2056,20 +1814,20 @@ class UserManagementViewsTestCase(PermaTestCase):
         # (This succeeds and creates a new account; see issue 1749)
         new_user = self.new_court_user()
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': new_user['email'],
+                          data = { 'address': new_user['raw_email'],
                                    'requested_account_note': new_court['requested_account_note'],
                                    'create_account': True },
                           user = existing_user['email'],
                           success_url = reverse('register_email_instructions'))
         expected_emails_sent += 2
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['email'])
-        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
+        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['raw_email'])
+        self.check_court_email(mail.outbox[expected_emails_sent - 1], new_user['raw_email'])
 
         # Existing user's email address, not that of the user logged in.
         # (This is odd; see issue 1749)
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': existing_user['email'],
+                          data = { 'address': self.randomize_capitalization(existing_user['email']),
                                    'requested_account_note': new_court['requested_account_note'],
                                    'create_account': True },
                           user = another_existing_user['email'],
@@ -2078,18 +1836,20 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_court_email(mail.outbox[expected_emails_sent - 1], existing_user['email'])
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_court_form_honeypot(self):
         new_court = self.new_court()
         new_user = self.new_court_user()
         self.submit_form('sign_up_courts',
-                          data = { 'e-address': new_user['email'],
+                          data = { 'email': new_user['raw_email'],
                                    'requested_account_note': new_court['requested_account_note'],
                                    'create_account': True,
-                                   'telephone': "I'm a bot." },
+                                   'email_confirmation': "I'm a bot." },
                           success_url = reverse('register_email_instructions'))
         self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(LinkUser.objects.filter(email=new_user['email']).exists())
+        self.assertFalse(LinkUser.objects.filter(email__iexact=new_user['raw_email']).exists())
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_court_failure(self):
         '''
             Does the court signup form submit as expected? Failure cases.
@@ -2108,320 +1868,187 @@ class UserManagementViewsTestCase(PermaTestCase):
                           error_keys = ['email', 'requested_account_note'])
         self.assertEqual(len(mail.outbox), 0)
 
+        # Existing user's email address, no court info
+        self.submit_form('sign_up_courts',
+                          data = { 'address': self.randomize_capitalization('test_user@example.com')},
+                          error_keys = ['requested_account_note'])
+        self.assertEqual(len(mail.outbox), 0)
+
+
 
     ### Firms ###
 
-    def new_firm(self):
-        rand = random()
-        return {'requested_account_note': 'Firm {}'.format(rand)}
+    def create_firm_registrar_form(self):
+        return {
+            'name': f'Firm {random()}',
+            'email': 'test-firm@example.com',
+            'website': 'https://www.example.com',
+        }
 
-    def new_firm_user(self):
-        rand = random()
-        return {'email': 'user{}@university.org'.format(rand),
-                'first': 'Joe',
-                'last': 'Yacobówski'}
+    def create_firm_usage_form(self):
+        return {
+            'estimated_number_of_seats': '10 - 50',
+            'estimated_perma_links_per_month': '101 - 500',
+        }
 
-    def check_firm_email(self, message, firm_email):
-        our_address = settings.DEFAULT_FROM_EMAIL
+    def create_firm_user_form(self):
+        email = self.randomize_capitalization(f'user{random()}@university.org')
+        return {
+            'raw_email': email,
+            'normalized_email': email.lower(),
+            'first': 'Joe',
+            'last': 'Yacobówski',
+            'registrar_user_candidate': bool(getrandbits(1)),
+        }
 
-        # Doesn't check email contents yet; too many variations possible presently
-        self.assertEqual(message.subject, "Perma.cc new law firm account information request")
-        self.assertEqual(message.from_email, our_address)
-        self.assertEqual(message.recipients(), [our_address])
-        self.assertDictEqual(message.extra_headers, {'Reply-To': firm_email})
+    def check_firm_email(self, message: str, firm_email: str):
+        perma_admin_email = settings.DEFAULT_FROM_EMAIL
 
+        self.assertTrue(message.subject.startswith('Perma.cc new paid registrar account request'))
+        self.assertEqual(message.from_email, perma_admin_email)
+        self.assertEqual(message.to, [firm_email.lower()])
+        self.assertEqual(message.cc, [perma_admin_email])
+        self.assertEqual(message.reply_to, [perma_admin_email])
+
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_firm_success(self):
-        '''
-            Does the firm signup form submit as expected? Success cases.
-        '''
-        new_firm = self.new_firm()
-        new_user = self.new_firm_user()
+        firm_registrar_form = self.create_firm_registrar_form()
+        firm_usage_form = self.create_firm_usage_form()
+        firm_user_form = self.create_firm_user_form()
         existing_user = {'email': 'test_user@example.com'}
-        another_existing_user = {'email': 'another_library_user@example.com'}
         expected_emails_sent = 0
 
         # NOT LOGGED IN
 
-        # Existing user's email address, no court info
-        # (currently succeeds, should probably fail; see issue 1746)
-        self.submit_form('sign_up_firm',
-                         data={'e-address': existing_user['email']},
-                         success_url=reverse('firm_request_response'))
-        expected_emails_sent += 1
+        # Existing user's email address, no firm info (should not succeed due to missing values)
+        self.submit_form(
+            'sign_up_orgs',
+            data={'a-address': self.randomize_capitalization(existing_user['email'])},
+        )
+        expected_emails_sent += 0
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_firm_email(mail.outbox[expected_emails_sent - 1], existing_user['email'])
 
         # Existing user's email address + firm info
-        self.submit_form('sign_up_firm',
-                         data={'e-address': existing_user['email'],
-                               'requested_account_note': new_firm['requested_account_note']},
-                         success_url=reverse('firm_request_response'))
+        self.submit_form(
+            'sign_up_orgs',
+            data={
+                'a-address': self.randomize_capitalization(existing_user['email']),
+                'a-registrar_user_candidate': firm_user_form['registrar_user_candidate'],
+                **firm_registrar_form,
+                **firm_usage_form,
+            },
+            success_url=reverse('firm_request_response'),
+        )
         expected_emails_sent += 1
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_firm_email(mail.outbox[expected_emails_sent - 1], existing_user['email'])
 
         # New user email address, don't create account
-        self.submit_form('sign_up_firm',
-                         data={'e-address': new_user['email'],
-                               'requested_account_note': new_firm['requested_account_note']},
-                         success_url=reverse('firm_request_response'))
+        self.submit_form(
+            'sign_up_orgs',
+            data={
+                'a-address': firm_user_form['raw_email'],
+                'a-registrar_user_candidate': firm_user_form['registrar_user_candidate'],
+                **firm_registrar_form,
+                **firm_usage_form,
+            },
+            success_url=reverse('firm_request_response'),
+        )
         expected_emails_sent += 1
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_firm_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
+        self.check_firm_email(mail.outbox[expected_emails_sent - 1], firm_user_form['raw_email'])
 
         # New user email address, create account
-        self.submit_form('sign_up_firm',
-                         data={'e-address': new_user['email'],
-                               'requested_account_note': new_firm['requested_account_note'],
-                               'create_account': True},
-                         success_url=reverse('register_email_instructions'))
+        self.submit_form(
+            'sign_up_orgs',
+            data={
+                'a-address': firm_user_form['raw_email'],
+                'a-registrar_user_candidate': firm_user_form['registrar_user_candidate'],
+                **firm_registrar_form,
+                **firm_usage_form,
+                'create_account': True,
+            },
+            success_url=reverse('register_email_instructions'),
+        )
         expected_emails_sent += 2
         self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['email'])
-        self.check_firm_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
+        self.check_firm_email(mail.outbox[expected_emails_sent - 2], firm_user_form['raw_email'])
+        self.check_new_activation_email(
+            mail.outbox[expected_emails_sent - 1], firm_user_form['raw_email']
+        )
 
         # LOGGED IN
 
-        # New user email address
-        # (This succeeds and creates a new account; see issue 1749)
-        new_user = self.new_firm_user()
-        self.submit_form('sign_up_firm',
-                         data={'e-address': new_user['email'],
-                               'requested_account_note': new_firm['requested_account_note'],
-                               'create_account': True},
-                         user=existing_user['email'],
-                         success_url=reverse('register_email_instructions'))
-        expected_emails_sent += 2
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 2], new_user['email'])
-        self.check_firm_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
-
-        # Existing user's email address, not that of the user logged in.
-        # (This is odd; see issue 1749)
-        self.submit_form('sign_up_firm',
-                         data={'e-address': existing_user['email'],
-                               'requested_account_note': new_firm['requested_account_note'],
-                               'create_account': True},
-                         user=another_existing_user['email'],
-                         success_url=reverse('firm_request_response'))
+        # Existing user
+        self.submit_form(
+            'sign_up_orgs',
+            data={
+                'a-address': existing_user['email'],
+                'a-registrar_user_candidate': firm_user_form['registrar_user_candidate'],
+                **firm_registrar_form,
+                **firm_usage_form,
+            },
+            user=existing_user['email'],
+            success_url=reverse('firm_request_response'),
+        )
         expected_emails_sent += 1
         self.assertEqual(len(mail.outbox), expected_emails_sent)
         self.check_firm_email(mail.outbox[expected_emails_sent - 1], existing_user['email'])
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_firm_form_honeypot(self):
-        new_firm = self.new_firm()
-        new_user = self.new_firm_user()
-        self.submit_form('sign_up_firm',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_firm['requested_account_note'],
-                                   'create_account': True,
-                                   'telephone': "I'm a bot." },
-                          success_url = reverse('register_email_instructions'))
+        firm_registrar_form = self.create_firm_registrar_form()
+        firm_usage_form = self.create_firm_usage_form()
+        firm_user_form = self.create_firm_user_form()
+        self.submit_form(
+            'sign_up_orgs',
+            data={
+                'a-address': firm_user_form['raw_email'],
+                'create_account': True,
+                'a-email_confirmation': "I'm a bot.",
+                **firm_registrar_form,
+                **firm_usage_form,
+                'a-registrar_user_candidate': True,
+            },
+            success_url=reverse('register_email_instructions'),
+        )
         self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(LinkUser.objects.filter(email=new_user['email']).exists())
+        self.assertFalse(
+            LinkUser.objects.filter(email__iexact=firm_user_form['raw_email']).exists()
+        )
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_firm_failure(self):
         '''
             Does the firm signup form submit as expected? Failure cases.
         '''
+        error_keys = [
+            'email',
+            'website',
+            'estimated_number_of_seats',
+            'estimated_perma_links_per_month',
+            'name',
+            'registrar_user_candidate',
+        ]
+
         # Not logged in, blank submission reports correct fields required
-        self.submit_form('sign_up_firm',
-                         data={},
-                         error_keys=['email', 'requested_account_note'])
+        self.submit_form(
+            'sign_up_orgs',
+            data={},
+            form_keys=['registrar_form', 'usage_form', 'user_form'],
+            error_keys=error_keys,
+        )
         self.assertEqual(len(mail.outbox), 0)
 
         # Logged in, blank submission reports same fields required
         # (This is odd; see issue 1749)
-        self.submit_form('sign_up_firm',
-                         data={},
-                         user='test_user@example.com',
-                         error_keys=['email', 'requested_account_note'])
-        self.assertEqual(len(mail.outbox), 0)
-
-    ### Journals ###
-
-    def new_journal(self):
-        rand = random()
-        return { 'requested_account_note': 'Journal {}'.format(rand)}
-
-    def new_journal_user(self):
-        rand = random()
-        return { 'email': 'user{}@university.org'.format(rand),
-                 'first': 'Joe',
-                 'last': 'Yacobówski' }
-
-    def test_new_journal_success(self):
-        '''
-            Does the journal signup form submit as expected? Success cases.
-        '''
-        new_journal = self.new_journal()
-        new_user = self.new_journal_user()
-        existing_user = {'email': 'test_user@example.com'}
-        expected_emails_sent = 0
-
-        # NOT LOGGED IN
-
-        # New user email address + journal info
-        self.submit_form('sign_up_journals',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_journal['requested_account_note']},
-                          success_url = reverse('register_email_instructions'))
-        expected_emails_sent += 1
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
-
-        # LOGGED IN
-
-        # New user email address + journal info
-        # (This succeeds and creates a new account; see issue 1749)
-        new_user = self.new_journal_user()
-        self.submit_form('sign_up_journals',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_journal['requested_account_note']},
-                          user = existing_user['email'],
-                          success_url = reverse('register_email_instructions'))
-        expected_emails_sent += 1
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
-
-    def test_new_journal_form_honeypot(self):
-        new_journal = self.new_journal()
-        new_user = self.new_journal_user()
-        self.submit_form('sign_up_journals',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_journal['requested_account_note'],
-                                   'telephone': "I'm a bot." },
-                          success_url = reverse('register_email_instructions'))
-        self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(LinkUser.objects.filter(email=new_user['email']).exists())
-
-    def test_new_journal_failure(self):
-        '''
-            Does the journal signup form submit as expected? Failure cases.
-        '''
-
-        # NOT LOGGED IN
-
-        # Blank submission reports correct fields required
-        self.submit_form('sign_up_journals',
-                          data = {},
-                          error_keys = ['email', 'requested_account_note'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # If email address already belongs to an account, validation fails
-        self.submit_form('sign_up_journals',
-                          data = { 'e-address': 'test_user@example.com',
-                                   'requested_account_note': 'Here'},
-                          error_keys = ['email'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # LOGGED IN
-        # (This is odd; see issue 1749)
-
-        # Blank submission reports correct fields required
-        self.submit_form('sign_up_journals',
-                          data = {},
-                          user = 'test_user@example.com',
-                          error_keys = ['email', 'requested_account_note'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # If email address already belongs to an account, validation fails
-        self.submit_form('sign_up_journals',
-                          data = { 'e-address': 'test_user@example.com',
-                                   'requested_account_note': 'Here'},
-                          user = 'test_user@example.com',
-                          error_keys = ['email'])
-        self.assertEqual(len(mail.outbox), 0)
-
-
-    ### Faculty ###
-
-    def new_faculty_user(self):
-        rand = random()
-        return { 'email': 'user{}@university.org'.format(rand),
-                 'first': 'Joe',
-                 'last': 'Yacobówski',
-                 'requested_account_note': 'Journal {}'.format(rand) }
-
-    def test_new_faculty_success(self):
-        '''
-            Does the faculty signup form submit as expected? Success cases.
-        '''
-        new_user = self.new_faculty_user()
-        existing_user = {'email': 'test_user@example.com'}
-        expected_emails_sent = 0
-
-        # NOT LOGGED IN
-
-        # New user email address + journal info
-        self.submit_form('sign_up_faculty',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_user['requested_account_note']},
-                          success_url = reverse('register_email_instructions'))
-        expected_emails_sent += 1
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
-
-        # LOGGED IN
-
-        # New user email address + journal info
-        # (This succeeds and creates a new account; see issue 1749)
-        new_user = self.new_faculty_user()
-        self.submit_form('sign_up_faculty',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_user['requested_account_note']},
-                          user = existing_user['email'],
-                          success_url = reverse('register_email_instructions'))
-        expected_emails_sent += 1
-        self.assertEqual(len(mail.outbox), expected_emails_sent)
-        self.check_new_activation_email(mail.outbox[expected_emails_sent - 1], new_user['email'])
-
-    def test_new_faculty_form_honeypot(self):
-        new_user = self.new_faculty_user()
-        self.submit_form('sign_up_faculty',
-                          data = { 'e-address': new_user['email'],
-                                   'requested_account_note': new_user['requested_account_note'],
-                                   'telephone': "I'm a bot." },
-                          success_url = reverse('register_email_instructions'))
-        self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(LinkUser.objects.filter(email=new_user['email']).exists())
-
-    def test_new_faculty_failure(self):
-        '''
-            Does the faculty signup form submit as expected? Failure cases.
-        '''
-
-        # NOT LOGGED IN
-
-        # Blank submission reports correct fields required
-        self.submit_form('sign_up_faculty',
-                          data = {},
-                          error_keys = ['email', 'requested_account_note'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # If email address already belongs to an account, validation fails
-        self.submit_form('sign_up_faculty',
-                          data = { 'e-address': 'test_user@example.com',
-                                   'requested_account_note': 'Here'},
-                          error_keys = ['email'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # LOGGED IN
-        # (This is odd; see issue 1749)
-
-        # Blank submission reports correct fields required
-        self.submit_form('sign_up_faculty',
-                          data = {},
-                          user = 'test_user@example.com',
-                          error_keys = ['email', 'requested_account_note'])
-        self.assertEqual(len(mail.outbox), 0)
-
-        # If email address already belongs to an account, validation fails
-        self.submit_form('sign_up_faculty',
-                          data = { 'e-address': 'test_user@example.com',
-                                   'requested_account_note': 'Here'},
-                          user = 'test_user@example.com',
-                          error_keys = ['email'])
+        self.submit_form(
+            'sign_up_orgs',
+            data={},
+            form_keys=['registrar_form', 'usage_form', 'user_form'],
+            user='test_user@example.com',
+            error_keys=error_keys,
+        )
         self.assertEqual(len(mail.outbox), 0)
 
     ### Individual Users ###
@@ -2431,66 +2058,111 @@ class UserManagementViewsTestCase(PermaTestCase):
         self.assertEqual(message.from_email, settings.DEFAULT_FROM_EMAIL)
         self.assertEqual(message.recipients(), [user_email])
 
-        activation_url = next(line for line in message.body.rstrip().split("\n") if line.startswith('http'))
+        activation_url = next(
+            line for line in message.body.rstrip().split('\n') if line.strip().startswith('http')
+        )
         return activation_url
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_account_creation_views(self):
         # user registration
-        new_user_email = "new_email@test.com"
-        self.submit_form('sign_up', {'e-address': new_user_email, 'first_name': 'Test', 'last_name': 'Test'},
+        new_user_raw_email = self.randomize_capitalization("new_email@test.com")
+        new_user_normalized_email = new_user_raw_email.lower()
+        self.submit_form('sign_up', {'address': new_user_raw_email, 'first_name': 'Test', 'last_name': 'Test'},
                          success_url=reverse('register_email_instructions'),
-                         success_query=LinkUser.objects.filter(email=new_user_email))
+                         success_query=LinkUser.objects.filter(
+                             email=new_user_normalized_email,
+                             raw_email=new_user_raw_email
+                         ))
 
         # email sent
         self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[0]
-        activation_url = self.check_new_activation_email(message, new_user_email)
+        activation_url = self.check_new_activation_email(message, new_user_raw_email)
 
         # the new user is created, but is unactivated
-        user = LinkUser.objects.get(email=new_user_email)
+        user = LinkUser.objects.get(email=new_user_normalized_email)
+        self.assertEqual(user.raw_email, new_user_raw_email)
         self.assertFalse(user.is_active)
         self.assertFalse(user.is_confirmed)
 
         # if you tamper with the code, it is rejected
-        response = self.client.get(activation_url[:-1]+'wrong/')
+        response = self.client.get(activation_url[:-1]+'wrong/', secure=True)
         self.assertContains(response, 'This activation/reset link is invalid')
 
         # reg confirm - non-matching passwords
-        response = self.client.get(activation_url, follow=True)
+        response = self.client.get(activation_url, follow=True, secure=True)
         post_url = response.redirect_chain[0][0]
         self.assertTemplateUsed(response, 'registration/password_reset_confirm.html')
-        response = self.client.post(post_url, {'new_password1': 'Anewpass1', 'new_password2': 'Anewpass2'}, follow=True)
+        response = self.client.post(post_url, {'new_password1': 'Anewpass1', 'new_password2': 'Anewpass2'}, follow=True, secure=True)
         self.assertNotContains(response, 'Your password has been set')
-        self.assertContains(response, "The two password fields didn&#39;t match")
+        self.assertContains(response, "The two password fields didn’t match")
         # reg confirm - correct
-        response = self.client.post(post_url, {'new_password1': 'Anewpass1', 'new_password2': 'Anewpass1'}, follow=True)
+        response = self.client.post(post_url, {'new_password1': 'Anewpass1', 'new_password2': 'Anewpass1'}, follow=True, secure=True)
         self.assertContains(response, 'Your password has been set')
 
         # Doesn't work twice.
-        response = self.client.post(post_url, {'new_password1': 'Anotherpass1', 'new_password2': 'Anotherpass1'}, follow=True)
+        response = self.client.post(post_url, {'new_password1': 'Anotherpass1', 'new_password2': 'Anotherpass1'}, follow=True, secure=True)
         self.assertContains(response, 'This activation/reset link is invalid')
 
         # the new user is now activated and can log in
         user.refresh_from_db()
         self.assertTrue(user.is_active)
         self.assertTrue(user.is_confirmed)
-        response = self.client.post(reverse('user_management_limited_login'), {'username': new_user_email, 'password': 'Anewpass1'}, follow=True)
-        self.assertContains(response, 'Enter any URL to preserve it forever')
+        response = self.client.post(reverse('user_management_limited_login'), {'username': new_user_raw_email, 'password': 'Anewpass1'}, follow=True, secure=True)
+        self.assertEqual(response.redirect_chain[0][0], '/manage/create/')
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
+    def test_suggested_registrars(self):
+        # Register user
+        _, registrar_domain = self.registrar.email.split('@')
+        new_user_email = f'new_user@{registrar_domain}'
+        self.submit_form(
+            'sign_up',
+            {'address': new_user_email, 'first_name': 'Test', 'last_name': 'Test'},
+            success_url=reverse('register_email_instructions'),
+            success_query=LinkUser.objects.filter(email=new_user_email),
+        )
+        self.assertEqual(len(mail.outbox), 1)
 
+        # Obtain suggested registrar(s) from activation email message
+        message = mail.outbox[0]
+        lines = message.body.splitlines()
+        captures = []
+        for line in lines:
+            if line.lstrip().startswith('- '):
+                captures.append(line.strip('- '))
+
+        # Validate suggested registrar(s)
+        self.assertEqual(len(captures), 1)
+        self.assertEqual(captures[0], f'{self.registrar.name}: {self.registrar.email}')
+
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_signup_with_existing_email_rejected(self):
+        self.assertEqual(LinkUser.objects.filter(email__iexact=self.registrar_user.email).count(), 1)
         self.submit_form('sign_up',
-                         {'e-address': self.registrar_user.email, 'first_name': 'Test', 'last_name': 'Test'},
+                         {'address': self.registrar_user.email, 'first_name': 'Test', 'last_name': 'Test'},
                          error_keys=['email'])
+        self.submit_form('sign_up',
+                 {'address': self.randomize_capitalization(self.registrar_user.email), 'first_name': 'Test', 'last_name': 'Test'},
+                 error_keys=['email'])
+        self.assertEqual(LinkUser.objects.filter(email__iexact=self.registrar_user.email).count(), 1)
 
+    @override_settings(REQUIRE_JS_FORM_SUBMISSIONS=False)
     def test_new_user_form_honeypot(self):
         new_user_email = "new_email@test.com"
         self.submit_form('sign_up',
-                          data = { 'e-address': new_user_email,
-                                   'telephone': "I'm a bot." },
+                          data = { 'address': new_user_email,
+                                   'email_confirmation': "I'm a bot." },
                           success_url = reverse('register_email_instructions'))
         self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(LinkUser.objects.filter(email=new_user_email).exists())
+        self.assertFalse(LinkUser.objects.filter(email__iexact=new_user_email).exists())
+
+    def test_manual_user_creation_rejects_duplicative_emails(self):
+        email = 'test_user@example.com'
+        self.assertTrue(LinkUser.objects.filter(email=email).exists())
+        new_user = LinkUser(email=self.randomize_capitalization(email))
+        self.assertRaises(IntegrityError, new_user.save)
 
     def test_get_new_activation_code(self):
         self.submit_form('user_management_not_active',
@@ -2555,12 +2227,25 @@ class UserManagementViewsTestCase(PermaTestCase):
     def test_admin_can_resend_activation_to_registrar_user(self):
         self.check_activation_resent('test_admin_user@example.com','test_registrar_user@example.com')
 
-    ### ADMIN STATS ###
+    ### PASSWORD RESETS ###
 
-    def test_admin_stats(self):
-        self.log_in_user(self.admin_user)
-        self.get('user_management_stats', reverse_kwargs={'args':['days']})
-        self.get('user_management_stats', reverse_kwargs={'args':['celery']})
-        self.get('user_management_stats', reverse_kwargs={'args':['random']})
-        self.get('user_management_stats', reverse_kwargs={'args':['emails']})
-        self.get('user_management_stats', reverse_kwargs={'args':['job_queue']})
+    def test_password_reset_is_case_insensitive(self):
+        email = 'test_user@example.com'
+        not_a_user = 'doesnotexist@example.com'
+        self.assertEqual(LinkUser.objects.filter(email__iexact=email).count(), 1)
+        self.assertFalse(LinkUser.objects.filter(email=not_a_user).exists())
+
+        self.submit_form('password_reset', data={})
+        self.submit_form('password_reset', data={'email': not_a_user})
+        self.assertEqual(len(mail.outbox), 0)
+
+        self.submit_form('password_reset', data={'email': email})
+        self.assertEqual(len(mail.outbox), 1)
+
+        self.submit_form('password_reset', data={'email': self.randomize_capitalization(email)})
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_password_reset_rejects_control_characters(self):
+        # NUL / other control characters must not reach Postgres or cause a 500
+        self.submit_form('password_reset', data={'email': 'test\x00user@example.com'})
+        self.assertEqual(len(mail.outbox), 0)

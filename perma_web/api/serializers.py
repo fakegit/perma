@@ -1,16 +1,34 @@
 from django.conf import settings
-from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.validators import URLValidator
-import requests
+from django.db.models import F, Case, When, Value, BooleanField
 from rest_framework import serializers
+import waffle
 
+from perma.exceptions import ScoopAPIException
 from perma.models import LinkUser, Folder, CaptureJob, Capture, Link, Organization, LinkBatch
-from perma.utils import ip_in_allowed_ip_range
+from perma.utils import send_to_scoop
 
-from .utils import get_mime_type, mime_type_lookup, reverse_api_view
+from .filecheck import scan_upload
+from .utils import get_mime_type, mime_type_lookup, get_download_url
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def scope_folder_relationship(serializer, field_name):
+    """Limit a writable folder relationship to folders visible to the requester."""
+    field = serializer.fields[field_name]
+    if field.read_only or field_name not in getattr(serializer, 'initial_data', {}):
+        return
+
+    request = serializer.context.get('request')
+    field.queryset = (
+        Folder.objects.accessible_to(request.user)
+        if request and request.user.is_authenticated
+        else Folder.objects.none()
+    )
+
 
 class BaseSerializer(serializers.ModelSerializer):
     """ Base serializer from which all of our serializers inherit. """
@@ -46,29 +64,52 @@ class LinkUserSerializer(BaseSerializer):
         return field_names
 
     def get_top_level_folders(self, user):
-        serializer = FolderSerializer(user.top_level_folders(), many=True)
-        return serializer.data
+        # For users with a lot of top level folders, like admins, building Folder objects and serializing
+        # with FolderSerializer is very slow. Instead, fetch a list of dicts directly with values().
+        return list(user.top_level_folders().select_related('organization__registrar').annotate(
+            has_children=F('cached_has_children'),
+            path=F('cached_path'),
+            registrar=F('organization__registrar_id'),
+            registrar_name=F('organization__registrar__name'),
+            default_to_private=Case(
+                When(organization__isnull=True, then=Value(False)),
+                default=F('organization__default_to_private'),
+                output_field=BooleanField()
+            ),
+        ).values(
+            'id',
+            'name', 
+            'parent',
+            'has_children',
+            'path',
+            'organization',
+            'registrar',
+            'registrar_name',
+            'sponsored_by',
+            'is_sponsored_root_folder',
+            'read_only',
+            'default_to_private',
+        ))
 
 
 ### FOLDER ###
 
 class FolderSerializer(BaseSerializer):
+    parent = serializers.PrimaryKeyRelatedField(queryset=Folder.objects.none())
     has_children = serializers.SerializerMethodField()
-    path = serializers.SerializerMethodField()
-    # after cached_path is set for all folders, replace path with:
-    # path = serializers.CharField(source='cached_path')
+    path = serializers.CharField(source='cached_path', read_only=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_folder_relationship(self, 'parent')
 
     class Meta:
         model = Folder
         fields = ('id', 'name', 'parent', 'has_children', 'path', 'organization', 'sponsored_by', 'is_sponsored_root_folder', 'read_only')
-        extra_kwargs = {'parent': {'required': True, 'allow_null': False}}
         allowed_update_fields = ['name', 'parent']
 
     def get_has_children(self, folder):
         return not folder.is_leaf_node()
-
-    def get_path(self, folder):
-        return folder.cached_path or folder.get_path()
 
     def validate_name(self, name):
         if self.instance:
@@ -84,15 +125,19 @@ class FolderSerializer(BaseSerializer):
         if self.instance:
             # moving
             if self.instance.is_shared_folder:
-                raise serializers.ValidationError("You can't move organization's shared folder.")
+                raise serializers.ValidationError("You can't move an organization's shared folder.")
             if self.instance.is_sponsored_root_folder:
-                raise serializers.ValidationError("You can't move Sponsored Links folder.")
+                raise serializers.ValidationError("You can't move your Sponsored Links folder.")
             if parent.is_sponsored_root_folder:
                 raise serializers.ValidationError("You can't make top-level sponsored folders.")
             if self.instance.sponsorship and self.instance.parent == self.instance.sponsorship.user.sponsored_root_folder:
                 raise serializers.ValidationError("You can't move top-level sponsored folders.")
             if self.instance.is_root_folder:
-                raise serializers.ValidationError("You can't move Personal Links folder.")
+                raise serializers.ValidationError("You can't move your Personal Links folder.")
+            if self.instance.id == parent.id:
+                raise serializers.ValidationError("A node may not be made a child of itself.")
+            if parent.id in list(self.instance.get_descendants().tree_filter(tree_root__id=self.instance.tree_root_id).values_list('id', flat=True)):
+                raise serializers.ValidationError("A node may not be made a child of any of its descendants.")
         return parent
 
     def validate(self, data):
@@ -157,11 +202,21 @@ class LinkSerializer(BaseSerializer):
     captures = CaptureSerializer(many=True, read_only=True)
     queue_time = serializers.SerializerMethodField()
     capture_time = serializers.SerializerMethodField()
-    warc_download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Link
-        fields = ('guid', 'creation_timestamp', 'url', 'title', 'description', 'warc_size', 'warc_download_url', 'captures', 'queue_time', 'capture_time')
+        fields = (
+            'guid',
+            'creation_timestamp',
+            'url',
+            'title',
+            'description',
+            'warc_size',
+            'wacz_size',
+            'captures',
+            'queue_time',
+            'capture_time'
+        )
 
     def get_queue_time(self, link):
         try:
@@ -177,11 +232,6 @@ class LinkSerializer(BaseSerializer):
         except (ObjectDoesNotExist, TypeError):
             return None
 
-    def get_warc_download_url(self, link):
-        if link.warc_size:
-            return reverse_api_view('public_archives_download', kwargs={'guid': link.guid}, request=self.context['request'])
-        return None
-
 
 class AuthenticatedLinkSerializer(LinkSerializer):
     """
@@ -189,15 +239,18 @@ class AuthenticatedLinkSerializer(LinkSerializer):
     """
     created_by = LinkUserSerializer(read_only=True)
     organization = OrganizationSerializer(read_only=True)
+    warc_download_url = serializers.SerializerMethodField()
+    wacz_download_url = serializers.SerializerMethodField()
 
     class Meta(LinkSerializer.Meta):
-        fields = LinkSerializer.Meta.fields + ('notes', 'created_by', 'is_private', 'private_reason', 'user_deleted', 'archive_timestamp', 'organization')
-        allowed_update_fields = ['submitted_title', 'submitted_description', 'notes', 'is_private', 'private_reason']
+        fields = LinkSerializer.Meta.fields + ('warc_download_url', 'wacz_download_url', 'notes', 'created_by', 'is_private', 'private_reason', 'user_deleted', 'archive_timestamp', 'organization', 'default_to_screenshot_view')
+        allowed_update_fields = ['submitted_title', 'submitted_description', 'notes', 'is_private', 'private_reason', 'default_to_screenshot_view']
 
     def get_warc_download_url(self, link):
-        if link.warc_size:
-            return reverse_api_view('archives_download', kwargs={'guid': link.guid}, request=self.context['request'])
-        return None
+        return get_download_url(self.context['request'], link, file_format='warc')
+
+    def get_wacz_download_url(self, link):
+        return get_download_url(self.context['request'], link, file_format='wacz')
 
     def validate_url(self, url):
         # Clean up the user submitted url
@@ -221,7 +274,7 @@ class AuthenticatedLinkSerializer(LinkSerializer):
 
                 # if updating privacy, make sure user is allowed to change private status
                 if 'is_private' in data and self.instance.is_private != bool(data['is_private']):
-                    if self.instance.private_reason and self.instance.private_reason not in ['user', 'old_policy']:
+                    if self.instance.private_reason and self.instance.private_reason not in ['user', 'meta']:
                         errors['is_private'] = 'Cannot change link privacy.'
                     else:
                         data['private_reason'] = 'user' if data['is_private'] else None
@@ -234,31 +287,37 @@ class AuthenticatedLinkSerializer(LinkSerializer):
             if not data.get('submitted_url'):
                 errors['url'] = "URL cannot be empty."
             else:
-                try:
-                    validate = URLValidator()
+                if uploaded_file:
+                    # Validate, but don't force Scoop validation if a file is provided
                     temp_link = Link(submitted_url=data['submitted_url'])
-                    validate(temp_link.ascii_safe_url)
+                    try:
+                        URLValidator()(temp_link.ascii_safe_url)
+                    except ValidationError as e:
+                        errors['url'] = e.message
 
-                    # Don't force URL resolution validation if a file is provided
-                    if not uploaded_file:
-                        if not temp_link.ip:
-                            errors['url'] = "Couldn't resolve domain."
-                        elif not ip_in_allowed_ip_range(temp_link.ip):
-                            errors['url'] = "Not a valid IP."
-                        elif not temp_link.headers:
-                            errors['url'] = "Couldn't load URL."
-                        else:
-                            # preemptively reject URLs that report a size over settings.MAX_ARCHIVE_FILE_SIZE
-                            try:
-                                if int(temp_link.headers.get('content-length', 0)) > settings.MAX_ARCHIVE_FILE_SIZE:
-                                    errors['url'] = f"Target page is too large (max size {settings.MAX_ARCHIVE_FILE_SIZE / 1024 / 1024}MB)."
-                            except ValueError:
-                                # content-length header wasn't an integer. Carry on.
-                                pass
-                except DjangoValidationError:
-                    errors['url'] = "Not a valid URL."
-                except requests.TooManyRedirects:
-                    errors['url'] = "URL caused a redirect loop."
+                elif waffle.switch_is_active('disable_live_capture'):
+                    errors['url'] = "We are currently experiencing difficulty capturing the live web. Thanks for your patience as our team investigates."
+
+                else:
+                    # Ask the Scoop API to validate and resolve the URL
+                    try:
+                        _, response_data = send_to_scoop(
+                            method="post",
+                            path="validate",
+                            json={"url": Link.get_ascii_safe_url(data['submitted_url'])},
+                            timeout=settings.RESOURCE_LOAD_TIMEOUT,
+                            valid_if=lambda code, data: code == 200 and "valid" in data,
+                        )
+                        if not response_data["valid"]:
+                            errors['url'] = response_data["message"]
+                        if content_length := response_data.get('content_length'):
+                            if content_length > settings.MAX_ARCHIVE_FILE_SIZE:
+                                errors['url'] = f"Target page is too large (max size {settings.MAX_ARCHIVE_FILE_SIZE / 1024 / 1024}MB)."
+                        if validation_status_code := response_data.get("status_code"):
+                            self.validation_status_code = validation_status_code
+                    except ScoopAPIException:
+                        logger.exception("Scoop validation attempt failed.")
+                        errors['url'] = "We encountered a network error: please try again."
 
         # check uploaded file
         if uploaded_file == '':
@@ -278,30 +337,12 @@ class AuthenticatedLinkSerializer(LinkSerializer):
                     errors['file'] = "File is too large."
 
                 elif not errors.get('file') and settings.SCAN_UPLOADS:
-                    uploaded_file.file.seek(0)
-                    try:
-                        r = requests.post(
-                            settings.SCAN_URL,
-                            files={'file': (uploaded_file.name, uploaded_file.file.read())}
-                        )
-                        assert r.ok, r.status_code
-                        scan_results = r.json()
-                    except (requests.RequestException, AssertionError) as e:
-                        scan_results = {"safe": False, "reason": f"Communication with filecheck API failed: {str(e)}"}
-
-                    if not scan_results['safe']:
-                        if scan_results['reason'].startswith("Communication with filecheck API failed"):
-                            # Report the error, but pass the file through.
-                            logger.error(scan_results['reason'])
-                        elif scan_results['reason'] in ["clamav not running", "clamav out of date"]:
-                            # Report the error, but pass the file through.
-                            msg = f"Filecheck service reports: {scan_results['reason']}"
-                            logger.error(msg)
-                        else:
-                            # Report the error and block the file.
-                            msg = f"Unsafe file upload attempt by user {user.id}: {scan_results['reason']}"
-                            logger.warning(msg)
-                            errors['file'] = "Validation failed."
+                    verdict, reason = scan_upload(uploaded_file, settings.SCAN_URL, settings.SCAN_TIMEOUT)
+                    if verdict == 'unavailable':
+                        logger.error("Filecheck service unavailable: %s", reason)
+                    elif verdict in ('unsafe', 'rejected'):
+                        logger.warning("Unsafe file upload attempt by user %s: %s", user.id, reason)
+                        errors['file'] = "Validation failed."
 
         if errors:
             raise serializers.ValidationError(errors)
@@ -312,7 +353,12 @@ class AuthenticatedLinkSerializer(LinkSerializer):
 ### LINKBATCH ###
 
 class LinkBatchSerializer(BaseSerializer):
+    target_folder = serializers.PrimaryKeyRelatedField(queryset=Folder.objects.none())
     capture_jobs = CaptureJobSerializer(many=True, read_only=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_folder_relationship(self, 'target_folder')
 
     class Meta:
         model = LinkBatch
@@ -321,3 +367,9 @@ class LinkBatchSerializer(BaseSerializer):
 
 class DetailedLinkBatchSerializer(LinkBatchSerializer):
     target_folder = FolderSerializer(read_only=True)
+
+
+### DAILY LINK COUNTS ###
+
+class InternalDailyLinkCountsQuerySerializer(serializers.Serializer):
+    lookback_period = serializers.IntegerField(default=30, min_value=1, max_value=365, required=False)

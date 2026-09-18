@@ -4,10 +4,10 @@
 
 $grid: 8px;
 $double: $grid * 2;
-$half: $grid / 2;
+$half: $grid * 0.5;
 
 $col-gutter: $grid * 4;
-$bleed: -1 * ($col-gutter / 2);
+$bleed: -1 * ($col-gutter * 0.5);
 $page-margin: $grid * 2;
 
 /////////////////////////
@@ -49,6 +49,8 @@ $color-orange: #DD671A;
 
 $color-green: #77AE3A;
 $color-khaki: #F6F8F1;
+
+$color-banner-background: #bcd3f9;
 
 $color-black: #222;
 $color-trans-black: rgba(0,0,0,.95);
@@ -92,6 +94,7 @@ $size-xlarge: 40px;
 $size-large: 24px;
 $size-xbody: 1.222222rem;
 $size-body: 17px;
+$size-medium: 14px;
 $size-small: 12px;
 
 /////////////////////////

@@ -11,10 +11,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 1,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "22",
+      "cached_has_children": false,
+      "tree_root": 22
     }
   },
   {
@@ -29,10 +30,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 4,
-      "tree_id": 2,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "23",
+      "cached_has_children": false,
+      "tree_root": 23
     }
   },
   {
@@ -47,10 +49,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 3,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "24",
+      "cached_has_children": false,
+      "tree_root": 24
     }
   },
   {
@@ -65,10 +68,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 4,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "25",
+      "cached_has_children": true,
+      "tree_root": 25
     }
   },
   {
@@ -83,10 +87,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 5,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "26",
+      "cached_has_children": false,
+      "tree_root": 26
     }
   },
   {
@@ -101,10 +106,11 @@
       "organization": 1,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 6,
-      "tree_id": 10,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "27",
+      "cached_has_children": true,
+      "tree_root": 27
     }
   },
   {
@@ -119,10 +125,11 @@
       "organization": 2,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 6,
-      "tree_id": 11,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "28",
+      "cached_has_children": true,
+      "tree_root": 28
     }
   },
   {
@@ -137,10 +144,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 4,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "25-29",
+      "cached_has_children": false,
+      "tree_root": 25
     }
   },
   {
@@ -155,10 +163,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 4,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "25-30",
+      "cached_has_children": false,
+      "tree_root": 25
     }
   },
   {
@@ -173,10 +182,11 @@
       "organization": 3,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 6,
-      "tree_id": 12,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "31",
+      "cached_has_children": true,
+      "tree_root": 31
     }
   },
   {
@@ -191,10 +201,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 13,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "32",
+      "cached_has_children": false,
+      "tree_root": 32
     }
   },
   {
@@ -209,10 +220,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 14,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "33",
+      "cached_has_children": false,
+      "tree_root": 33
     }
   },
   {
@@ -227,10 +239,11 @@
       "organization": 1,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 2,
-      "rght": 3,
-      "tree_id": 10,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "27-34",
+      "cached_has_children": false,
+      "tree_root": 27
     }
   },
   {
@@ -245,10 +258,11 @@
       "organization": 1,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 4,
-      "rght": 5,
-      "tree_id": 10,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "27-35",
+      "cached_has_children": false,
+      "tree_root": 27
     }
   },
   {
@@ -263,10 +277,11 @@
       "organization": 2,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 4,
-      "rght": 5,
-      "tree_id": 11,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "28-36",
+      "cached_has_children": false,
+      "tree_root": 28
     }
   },
   {
@@ -281,10 +296,11 @@
       "organization": 2,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 2,
-      "rght": 3,
-      "tree_id": 11,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "28-37",
+      "cached_has_children": false,
+      "tree_root": 28
     }
   },
   {
@@ -299,10 +315,11 @@
       "organization": 3,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 2,
-      "rght": 3,
-      "tree_id": 12,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "31-38",
+      "cached_has_children": false,
+      "tree_root": 31
     }
   },
   {
@@ -317,10 +334,11 @@
       "organization": 3,
       "is_shared_folder": false,
       "is_root_folder": false,
-      "lft": 4,
-      "rght": 5,
-      "tree_id": 12,
-      "level": 1
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "31-39",
+      "cached_has_children": false,
+      "tree_root": 31
     }
   },
   {
@@ -335,10 +353,11 @@
       "organization": 4,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 6,
-      "tree_id": 15,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "40",
+      "cached_has_children": false,
+      "tree_root": 40
     }
   },
   {
@@ -353,10 +372,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 16,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "41",
+      "cached_has_children": false,
+      "tree_root": 41
     }
   },
   {
@@ -371,10 +391,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 17,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "42",
+      "cached_has_children": false,
+      "tree_root": 42
     }
   },
   {
@@ -389,10 +410,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 18,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "43",
+      "cached_has_children": false,
+      "tree_root": 43
     }
   },
   {
@@ -407,10 +429,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 19,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "44",
+      "cached_has_children": false,
+      "tree_root": 44
     }
   },
   {
@@ -425,10 +448,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 20,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "45",
+      "cached_has_children": false,
+      "tree_root": 45
     }
   },
   {
@@ -443,10 +467,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 21,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "46",
+      "cached_has_children": false,
+      "tree_root": 46
     }
   },
   {
@@ -461,10 +486,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 22,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "47",
+      "cached_has_children": false,
+      "tree_root": 47
     }
   },
   {
@@ -479,10 +505,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 23,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "48",
+      "cached_has_children": false,
+      "tree_root": 48
     }
   },
   {
@@ -497,10 +524,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 24,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "49",
+      "cached_has_children": false,
+      "tree_root": 49
     }
   },
   {
@@ -515,10 +543,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 25,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "50",
+      "cached_has_children": false,
+      "tree_root": 50
     }
   },
   {
@@ -533,10 +562,11 @@
       "organization": 5,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 26,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "51",
+      "cached_has_children": false,
+      "tree_root": 51
     }
   },
   {
@@ -551,10 +581,11 @@
       "organization": 6,
       "is_shared_folder": true,
       "is_root_folder": false,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 27,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "52",
+      "cached_has_children": false,
+      "tree_root": 52
     }
   },
   {
@@ -569,10 +600,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 28,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "53",
+      "cached_has_children": false,
+      "tree_root": 53
     }
   },
   {
@@ -587,10 +619,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 29,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "54",
+      "cached_has_children": false,
+      "tree_root": 54
     }
   },
   {
@@ -605,10 +638,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 30,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "55",
+      "cached_has_children": false,
+      "tree_root": 55
     }
   },
   {
@@ -623,10 +657,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 31,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "56",
+      "cached_has_children": false,
+      "tree_root": 56
     }
   },
   {
@@ -641,10 +676,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 32,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "57",
+      "cached_has_children": false,
+      "tree_root": 57
     }
   },
   {
@@ -659,10 +695,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 33,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "58",
+      "cached_has_children": false,
+      "tree_root": 58
     }
   },
   {
@@ -678,10 +715,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": true,
-      "lft": 1,
-      "rght": 10,
-      "tree_id": 49,
-      "level": 0
+      "read_only": false,
+      "cached_path": "59",
+      "cached_has_children": true,
+      "tree_root": 59
     }
   },
   {
@@ -689,7 +726,7 @@
     "pk": 60,
     "fields": {
       "name": "Test Library",
-      "parent": null,
+      "parent": 59,
       "creation_timestamp": "2017-09-28T19:36:07Z",
       "created_by": 20,
       "owned_by": 20,
@@ -698,11 +735,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": false,
-      "lft": 4,
-      "rght": 9,
-      "parent": 59,
-      "tree_id": 49,
-      "level": 1
+      "read_only": false,
+      "cached_path": "59-60",
+      "cached_has_children": true,
+      "tree_root": 59
     }
   },
   {
@@ -710,7 +746,7 @@
     "pk": 61,
     "fields": {
       "name": "Sponsored Subfolder",
-      "parent": null,
+      "parent": 60,
       "creation_timestamp": "2017-09-28T19:36:07Z",
       "created_by": 20,
       "owned_by": 20,
@@ -719,11 +755,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": false,
-      "lft": 5,
-      "rght": 8,
-      "parent": 60,
-      "tree_id": 49,
-      "level": 2
+      "read_only": false,
+      "cached_path": "59-60-61",
+      "cached_has_children": true,
+      "tree_root": 59
     }
   },
   {
@@ -739,10 +774,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": true,
-      "lft": 1,
-      "rght": 6,
-      "tree_id": 50,
-      "level": 0
+      "read_only": false,
+      "cached_path": "62",
+      "cached_has_children": true,
+      "tree_root": 62
     }
   },
   {
@@ -750,7 +785,7 @@
     "pk": 63,
     "fields": {
       "name": "Test Library",
-      "parent": null,
+      "parent": 62,
       "creation_timestamp": "2017-09-28T19:36:07Z",
       "created_by": 22,
       "owned_by": 22,
@@ -759,12 +794,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": false,
-      "lft": 2,
-      "rght": 5,
-      "parent": 62,
-      "tree_id": 50,
-      "level": 1,
-      "read_only": true
+      "read_only": true,
+      "cached_path": "62-63",
+      "cached_has_children": true,
+      "tree_root": 62
     }
   },
   {
@@ -772,7 +805,7 @@
     "pk": 64,
     "fields": {
       "name": "Sponsored Subsubfolder",
-      "parent": null,
+      "parent": 61,
       "creation_timestamp": "2017-09-28T19:36:07Z",
       "created_by": 20,
       "owned_by": 20,
@@ -781,11 +814,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": false,
-      "lft": 6,
-      "rght": 7,
-      "parent": 61,
-      "tree_id": 49,
-      "level": 3
+      "read_only": false,
+      "cached_path": "59-60-61-64",
+      "cached_has_children": false,
+      "tree_root": 59
     }
   },
   {
@@ -793,7 +825,7 @@
     "pk": 65,
     "fields": {
       "name": "Inactive Sponsored Subfolder",
-      "parent": null,
+      "parent": 63,
       "creation_timestamp": "2017-09-28T19:36:07Z",
       "created_by": 22,
       "owned_by": 22,
@@ -802,12 +834,10 @@
       "is_shared_folder": false,
       "is_root_folder": false,
       "is_sponsored_root_folder": false,
-      "lft": 3,
-      "rght": 4,
-      "parent": 63,
-      "tree_id": 50,
-      "level": 2,
-      "read_only": true
+      "read_only": true,
+      "cached_path": "62-63-65",
+      "cached_has_children": false,
+      "tree_root": 62
     }
   },
   {
@@ -822,10 +852,11 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 51,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "66",
+      "cached_has_children": false,
+      "tree_root": 66
     }
   },
   {
@@ -840,10 +871,30 @@
       "organization": null,
       "is_shared_folder": false,
       "is_root_folder": true,
-      "lft": 1,
-      "rght": 2,
-      "tree_id": 52,
-      "level": 0
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "67",
+      "cached_has_children": false,
+      "tree_root": 67
+    }
+  },
+  {
+    "model": "perma.folder",
+    "pk": 68,
+    "fields": {
+      "name": "Personal Links",
+      "parent": null,
+      "creation_timestamp": "2002-02-28T00:00:00Z",
+      "created_by": 26,
+      "owned_by": 26,
+      "organization": null,
+      "is_shared_folder": false,
+      "is_root_folder": true,
+      "is_sponsored_root_folder": false,
+      "read_only": false,
+      "cached_path": "68",
+      "cached_has_children": false,
+      "tree_root": 68
     }
   }
 ]

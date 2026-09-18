@@ -1,16 +1,44 @@
-from axes.utils import reset as reset_login_attempts
+import logging
+import secrets
+import csv
+from io import StringIO
+import string
+from typing import Any, Mapping
 
+from axes.utils import reset as reset_login_attempts
 from django import forms
+from django.conf import settings
 from django.contrib.auth.forms import SetPasswordForm
-from django.forms import ModelForm
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.validators import EmailValidator
+from django.db.models.fields import BLANK_CHOICE_DASH
+from django.forms import Form, ModelForm
+from django.http import HttpRequest, HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import mark_safe
 
-from perma.models import Registrar, Organization, LinkUser, Sponsorship
+from perma.models import LinkUser, Organization, Registrar, Sponsorship, UserOrganizationAffiliation
+from perma.utils import get_client_ip
 
-import logging
 logger = logging.getLogger(__name__)
 
 ### HELPERS ###
+
+def check_honeypot(request, redirect_to_view, honey_pot_fieldname='email_confirmation', check_js=False):
+    def reject_request():
+        user_ip = get_client_ip(request)
+        logger.info(f"Suppressing invalid form submission from {user_ip}: {request.POST}")
+        return HttpResponseRedirect(reverse(redirect_to_view))
+
+    # the honeypot field should be display: none, so should never be filled out except by spam bots.
+    if request.POST.get(honey_pot_fieldname):
+        return reject_request()
+
+    # and if we are being particular... you have to have submitted this form via JS
+    if check_js and request.user.is_anonymous and settings.REQUIRE_JS_FORM_SUBMISSIONS:
+        if not request.POST.get('javascript'):
+            return reject_request()
+
 
 class OrganizationField(forms.ModelMultipleChoiceField):
     def __init__(self,
@@ -70,19 +98,86 @@ class LibraryRegistrarForm(ModelForm):
         self.fields['email'].label = "Library email"
         self.fields['website'].label = "Library website"
         self.fields['address'].label = "Library physical address"
-        # self.fields['logo'].label = "Library/University logo"
-        # # If you change here, please also change in clean_logo below
-        # self.fields['logo'].widget.attrs['accept'] = ".png,.jpg,.jpeg,.gif"
-        # self.fields['show_partner_status'].label = "Display us in the list of Perma.cc partners"
-        # self.fields['show_partner_status'].initial = True
 
-    # def clean(self):
-    #     logo = self.cleaned_data['logo']
-    #     if not logo or imghdr.what(logo) not in ['png', 'jpg', 'gif']:
-    #         if self.cleaned_data.get('show_partner', None):
-    #           msg = "Please include a logo (.png, .jpg, .gif)."
-    #           self.add_error('logo', msg)
-    #     return logo
+### FIRM (OTHER ORG) QUOTE FORMS ###
+
+class FirmRegistrarForm(ModelForm):
+    # Ensure firm name doesn't throw a DataError when we write it to LinkUser.requested_account_note
+    name = forms.CharField(
+        max_length=LinkUser.requested_account_note.field.max_length,
+        label='Organization name'
+    )
+
+    class Meta:
+        model = Registrar
+        fields = ['name', 'email', 'website']
+        labels = {
+            'email': 'Organization email',
+            'website': 'Organization website',
+        }
+
+
+class ApproveRegistrarForm(ModelForm):
+    registrar_user = forms.EmailField(required=False)
+
+    class Meta:
+        model = Registrar
+        fields = ['base_rate', 'status']
+
+    def __init__(self, data: Mapping[str, Any], registrar: Registrar, *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
+        self.registrar = registrar
+
+        # Populate base rate default value from model
+        self.fields['base_rate'].initial = registrar.base_rate
+        self.fields['base_rate'].widget.attrs.setdefault('value', str(registrar.base_rate))
+
+        # Require base rate and status only if paid registrar has a registrar user
+        has_registrar_user = registrar.pending_users.exists() or registrar.users.exists()
+        is_paid_registrar = registrar.nonpaying is False
+        if has_registrar_user and is_paid_registrar:
+            self.fields['base_rate'].required = True
+            self.fields['status'].required = True
+        else:
+            self.fields['base_rate'].required = False
+            self.fields['status'].required = False
+
+    def clean_status(self) -> str | None:
+        status = self.cleaned_data.get('status')
+
+        # Only approve registrar if it has an associated registrar user
+        has_registrar_user = self.registrar.pending_users.exists() or self.registrar.users.exists()
+        if status == 'approved' and not has_registrar_user:
+            raise ValidationError('To approve a registrar, you must first add a registrar user')
+
+        return status
+
+    def clean_registrar_user(self) -> str | None:
+        """Validate whether a LinkUser matching the supplied email exists."""
+        cleaned_value = self.cleaned_data['registrar_user'].lower()
+        if not cleaned_value:
+            return None
+
+        try:
+            LinkUser.objects.get(email=cleaned_value)
+        except ObjectDoesNotExist as error:
+            raise ValidationError(
+                'Email %(email)s does not match an existing user account',
+                params={'email': self.cleaned_data['registrar_user']},
+            ) from error
+        else:
+            return cleaned_value
+
+
+class FirmUsageForm(Form):
+    estimated_number_of_seats = forms.ChoiceField(
+        choices=[(option, option) for option in ['1 - 10', '10 - 50', '50 - 100', '100+']],
+        label='Number of seats',
+    )
+    estimated_perma_links_per_month = forms.ChoiceField(
+        choices=[(option, option) for option in ['< 100', '101 - 500', '500+']],
+        label='Number of new Perma Links created each month (across all users)',
+    )
 
 ### ORGANIZATION FORMS ###
 
@@ -119,17 +214,17 @@ class SetPasswordForm(SetPasswordForm):
 
 class UserForm(forms.ModelForm):
     """
-    User add/edit form.
+    User add form.
     """
-    telephone = forms.CharField(label="Do not fill out this box", required=False)  # field to fool bots
+    email_confirmation = forms.CharField(label="Email confirmation: humans, do not fill out this box", required=False)  # field to fool bots
 
     class Meta:
         model = LinkUser
-        fields = ["first_name", "last_name", "email", "telephone"]
+        fields = ["first_name", "last_name", "email", "email_confirmation"]
 
     def add_prefix(self, field_name):
         # rename the email field in the HTML to foil bots that are spamming us
-        field_name = "e-address" if field_name == "email" else field_name
+        field_name = "address" if field_name == "email" else field_name
         return super().add_prefix(field_name)
 
     def __init__(self, *args, **kwargs):
@@ -139,9 +234,29 @@ class UserForm(forms.ModelForm):
     def save(self, commit=True):
         # save user, and set a password so that the password_reset flow can be
         # used for email confirmation
-        self.instance.set_password(LinkUser.objects.make_random_password(length=20))
+
+        def make_random_password(len=20):
+            #  from https://docs.python.org/3/library/secrets.html#recipes-and-best-practices
+            alphabet = string.ascii_letters + string.digits
+            while True:
+                password = ''.join(secrets.choice(alphabet) for i in range(len))
+                if (any(c.islower() for c in password) and
+                        any(c.isupper() for c in password) and
+                        sum(c.isdigit() for c in password) >= 3):
+                    return password
+
+        self.instance.set_password(make_random_password())
         user = forms.ModelForm.save(self, commit)
         return user
+
+    def user_is_logged_in(self, request: HttpRequest) -> bool:
+        """Determine whether there is a currently logged-in user.
+
+        This may be useful for determining, e.g., whether or not to
+        display certain user registration fields.
+        """
+        return hasattr(request, 'user') and request.user.is_authenticated
+
 
 class UserFormWithAdmin(UserForm):
     """
@@ -175,6 +290,16 @@ class UserFormWithSponsoringRegistrar(UserForm):
     add sponsoring registrar to the create user form
     """
     sponsoring_registrars = forms.ModelChoiceField(label='Sponsoring Registrar', queryset=Registrar.objects.approved().order_by('name'))
+    indefinite_sponsorship = forms.BooleanField(
+        label="Sponsor permanently",
+        required=False,
+        initial=True
+    )
+    expires_at = forms.DateTimeField(
+        label="Sponsorship expiration date",
+        widget=forms.DateTimeInput(attrs={"type": "date"}),
+        required=False
+    )
 
     def __init__(self, data=None, current_user=None, **kwargs):
         self.current_user = current_user
@@ -191,7 +316,7 @@ class UserFormWithSponsoringRegistrar(UserForm):
 
     class Meta:
         model = LinkUser
-        fields = ["first_name", "last_name", "email", "sponsoring_registrars"]
+        fields = ["first_name", "last_name", "email", "sponsoring_registrars", "indefinite_sponsorship", "expires_at"]
 
     def clean(self):
         super().clean()
@@ -207,7 +332,7 @@ class UserFormWithSponsoringRegistrar(UserForm):
         # Adapted from https://stackoverflow.com/a/2264722
         instance = forms.ModelForm.save(self, False)
         def save_m2m():
-            Sponsorship.objects.create(registrar=self.cleaned_data['sponsoring_registrars'], user=instance, created_by=self.current_user)
+            Sponsorship.objects.create(registrar=self.cleaned_data['sponsoring_registrars'], user=instance, created_by=self.current_user, expires_at=self.cleaned_data['expires_at'])
         self.save_m2m = save_m2m
         if commit:
             instance.save()
@@ -221,7 +346,11 @@ class CreateUserFormWithCourt(UserForm):
     add court to the create user form
     """
 
-    requested_account_note = forms.CharField(required=True)
+    requested_account_note = forms.CharField(
+        required=True,
+        # Explicitly add this max length to the form, so that it is enforced by the HTML
+        max_length=LinkUser.requested_account_note.field.max_length
+    )
 
     class Meta:
         model = LinkUser
@@ -229,28 +358,45 @@ class CreateUserFormWithCourt(UserForm):
 
     def __init__(self, *args, **kwargs):
         super(CreateUserFormWithCourt, self).__init__(*args, **kwargs)
+
         self.fields['requested_account_note'].label = "Your court"
         self.fields['first_name'].label = "Your first name"
         self.fields['last_name'].label = "Your last name"
         self.fields['email'].label = "Your email"
+
+        # Populate and set visibility of fields based on whether user is logged in
+        if hasattr(self, 'request') and self.user_is_logged_in(self.request):
+            fields = ['first_name', 'last_name', 'email']
+            for field in fields:
+                self.fields[field].widget = self.fields[field].hidden_widget()
+
 
 class CreateUserFormWithFirm(UserForm):
     """
     add firm to the create user form
     """
 
-    requested_account_note = forms.CharField(required=True)
+    registrar_user_candidate = forms.ChoiceField(
+        widget=forms.Select, choices=[(True, 'Yes'), (False, 'No')], initial=(False, 'No')
+    )
 
     class Meta:
         model = LinkUser
-        fields = ["first_name", "last_name", "email", "requested_account_note"]
+        fields = ['first_name', 'last_name', 'email', 'registrar_user_candidate']
 
     def __init__(self, *args, **kwargs):
         super(CreateUserFormWithFirm, self).__init__(*args, **kwargs)
-        self.fields['requested_account_note'].label = "Your firm"
-        self.fields['first_name'].label = "Your first name"
-        self.fields['last_name'].label = "Your last name"
-        self.fields['email'].label = "Your email"
+
+        self.fields['first_name'].label = 'Your first name'
+        self.fields['last_name'].label = 'Your last name'
+        self.fields['email'].label = 'Your email'
+        self.fields['registrar_user_candidate'].label = 'Would you be an administrator on this account?'
+
+        # Populate and set visibility of fields based on whether user is logged in
+        if hasattr(self, 'request') and self.user_is_logged_in(self.request):
+            fields = ['first_name', 'last_name', 'email']
+            for field in fields:
+                self.fields[field].widget = self.fields[field].hidden_widget()
 
 
 class CreateUserFormWithUniversity(UserForm):
@@ -273,7 +419,17 @@ class UserFormWithOrganization(UserForm):
     """
     add organization to the create user form
     """
-    organizations = OrganizationField(widget=SelectMultipleWithSingleWidget)
+    organizations = forms.ModelChoiceField(label='Organization', queryset=Organization.objects.order_by('name'))
+    indefinite_affiliation = forms.BooleanField(
+        label="Permanent affiliation",
+        required=False,
+        initial=True
+    )
+    expires_at = forms.DateTimeField(
+        label="Affiliation expiration date",
+        widget=forms.DateTimeInput(attrs={"type": "date"}),
+        required=False
+    )
 
     def __init__(self, data=None, current_user=None, **kwargs):
         super(UserFormWithOrganization, self).__init__(data, **kwargs)
@@ -288,7 +444,174 @@ class UserFormWithOrganization(UserForm):
 
     class Meta:
         model = LinkUser
-        fields = ["first_name", "last_name", "email", "organizations"]
+        fields = ["first_name", "last_name", "email", "organizations", "indefinite_affiliation", "expires_at"]
+
+    def save(self, commit=True):
+        instance = forms.ModelForm.save(self, False)
+
+        if commit:
+            instance.save()
+            UserOrganizationAffiliation.objects.create(
+                user=instance,
+                organization=self.cleaned_data['organizations'],
+                expires_at=self.cleaned_data['expires_at']
+            )
+
+        return instance
+
+
+class MultipleUsersFormWithOrganization(ModelForm):
+    """
+    Create multiple organization users via CSV file
+    """
+    organizations = forms.ModelChoiceField(label='Organization', queryset=Organization.objects.order_by('name'))
+    indefinite_affiliation = forms.BooleanField(
+        label="Permanent affiliation",
+        required=False,
+        initial=True
+    )
+    expires_at = forms.DateTimeField(
+        label="Affiliation expiration date",
+        widget=forms.DateTimeInput(attrs={"type": "date"}),
+        required=False
+    )
+    csv_file = forms.FileField(label='* User information',
+                               help_text=mark_safe("<br>* When creating your CSV, please include the following fields: first_name, last_name, email. "
+                                                   "First and last name columns may be left blank.<br><br>"
+                                                   "If there is already a Perma.cc account associated with an "
+                                                   "email, we will add an Organization affiliation. If there is not, "
+                                                   "an account will be created and automatically affiliated with this "
+                                                   "Organization."))
+
+    def __init__(self, request, data=None, files=None, **kwargs):
+        super(MultipleUsersFormWithOrganization, self).__init__(data, files, **kwargs)
+        self.request = request
+        self.user_data = {}
+        self.created_users = {}
+        self.updated_users = {}
+        self.ineligible_users = {}
+
+        # Filter available organizations based on the current user
+        query = self.fields['organizations'].queryset
+        if request.user.is_registrar_user():
+            query = query.filter(registrar_id=request.user.registrar_id)
+        elif request.user.is_organization_user:
+            query = query.filter(users=request.user.pk)
+        self.fields['organizations'].queryset = query
+
+    class Meta:
+        model = LinkUser
+        fields = ["organizations", "indefinite_affiliation", "expires_at", "csv_file"]
+
+    def clean_csv_file(self):
+        file = self.cleaned_data['csv_file']
+
+        # check if file is CSV
+        if not file.name.endswith('.csv'):
+            raise forms.ValidationError("The file must be a CSV.")
+
+        # validate for encoding errors
+        try:
+            raw_contents = file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            raise forms.ValidationError("CSV file must be encoded with UTF-8. Please save the file with UTF-8 encoding and try again.")
+
+        # normalize the line endings to save the user the trouble
+        raw_contents = raw_contents.replace('\r\n', '\n').replace('\r', '\n')
+        reader = csv.DictReader(StringIO(raw_contents))
+        headers = reader.fieldnames
+
+        if not headers or not all(item in headers for item in ['first_name', 'last_name', 'email']):
+            raise forms.ValidationError("CSV file must contain a header row with first_name, last_name and email columns.")
+
+        # validate the rows
+        for row in reader:
+            email = row.get('email')
+            email = email.strip() if email else None
+
+            if not email:
+                raise forms.ValidationError("Each row in the CSV file must contain email.")
+
+            email_validator = EmailValidator()
+            try:
+                email_validator(email)
+            except ValidationError:
+                raise forms.ValidationError(f"CSV file contains invalid email address: {email}")
+
+            if email.lower() in self.user_data:
+                raise forms.ValidationError(f"CSV file cannot contain duplicate users: {email}")
+            else:
+                self.user_data[email.lower()] = {
+                    'raw_email': email,
+                    'first_name': row.get('first_name', '').strip(),
+                    'last_name': row.get('last_name', '').strip()
+                }
+
+        if not self.user_data:
+            raise forms.ValidationError("CSV file must contain at least one user.")
+
+        file.seek(0)
+        self.cleaned_data['csv_file'] = file
+        return file
+
+    def save(self, commit=True):
+        expires_at = self.cleaned_data['expires_at']
+        organization = self.cleaned_data['organizations']
+
+        all_emails = set(self.user_data)
+        affiliations_to_create = []
+
+        # find any existing users, and exclude any that are ineligible to become org users
+        existing_users = LinkUser.objects.filter(email__in=all_emails)
+        for user in existing_users:
+            if user.is_staff or user.is_registrar_user():
+                self.ineligible_users[user.email] = user
+            else:
+                self.updated_users[user.email] = user
+
+        # update the affiliation expiration date for any already-affiliated users
+        preexisting_affiliations = UserOrganizationAffiliation.objects.filter(
+            user__in=self.updated_users.values(),
+            organization=organization
+        ).select_related('user')
+        if preexisting_affiliations and commit:
+            preexisting_affiliations.update(expires_at=expires_at)
+
+        # build affiliation objects for existing users that need them
+        users_with_existing_affiliations = set(affiliation.user for affiliation in preexisting_affiliations)
+        users_without_existing_affiliations = set(self.updated_users.values()) - users_with_existing_affiliations
+        for user in users_without_existing_affiliations:
+            affiliations_to_create.append(UserOrganizationAffiliation(
+                user=user,
+                organization=organization,
+                expires_at=expires_at
+            ))
+
+        # create new users and their affiliation objects
+        new_user_emails = all_emails - set(self.ineligible_users) - set(self.updated_users)
+        for email in new_user_emails:
+            new_user = LinkUser(
+                    email=self.user_data[email]['raw_email'],
+                    first_name=self.user_data[email]['first_name'],
+                    last_name=self.user_data[email]['last_name']
+            )
+            if commit:
+                new_user.save()
+            self.created_users[email] = new_user
+
+            affiliations_to_create.append(
+                UserOrganizationAffiliation(
+                    user=new_user,
+                    organization=organization,
+                    expires_at=expires_at
+                )
+            )
+
+        # create new affiliation objects
+        if affiliations_to_create and commit:
+            UserOrganizationAffiliation.objects.bulk_create(affiliations_to_create)
+
+        return self
 
 
 ### USER EDIT FORMS ###
@@ -325,20 +648,26 @@ class UserAddOrganizationForm(UserFormWithOrganization):
         disables organizations where the user is already a member.
     """
     email = None  # hide inherited email field
-    organizations = OrganizationField(widget=OrgMembershipWidget)
 
-    def __init__(self, *args, **kwargs):
-        """ Let orgs widget access target user so we can disable orgs they already belong to. """
-        super(UserAddOrganizationForm, self).__init__(*args, **kwargs)
-        self.fields['organizations'].widget.form_instance = self
+    def __init__(self, data=None, current_user=None, **kwargs):
+        super(UserFormWithOrganization, self).__init__(data, **kwargs)
+
+        # filter available organizations based on current user
+        query = self.fields['organizations'].queryset
+        if current_user.is_registrar_user():
+            query = query.filter(registrar_id=current_user.registrar_id)
+        elif current_user.is_organization_user:
+            query = query.filter(users=current_user.pk)
+
+        # Exclude organizations the user is already affiliated with
+        affiliated_orgs = (UserOrganizationAffiliation.objects.filter(user=self.instance)
+                           .values_list('organization_id', flat=True))
+        query = query.exclude(id__in=affiliated_orgs)
+        self.fields['organizations'].queryset = query
 
     class Meta(UserFormWithOrganization.Meta):
-        fields = ("organizations",)
+        fields = ("organizations", "expires_at")
 
-    def save(self, commit=True):
-        """ Override save so we *add* the new organization rather than replacing all existing orgs for this user. """
-        self.instance.organizations.add(self.cleaned_data['organizations'][0])
-        return self.instance
 
 class UserAddAdminForm(forms.ModelForm):
     """
@@ -356,6 +685,14 @@ class UserAddAdminForm(forms.ModelForm):
             self.instance.save()
         return self.instance
 
+class UserUpdateProfileForm(forms.ModelForm):
+    """
+    Form for users to update their profile information.
+    """
+    class Meta:
+        model = LinkUser
+        fields = ['first_name', 'last_name', 'email']
+
 
 ### CONTACT FORMS ###
 
@@ -371,6 +708,46 @@ class ContactForm(forms.Form):
     email = forms.EmailField(label="Your email address")
     registrar = forms.ChoiceField(choices = (), label = 'Your library')
     subject = forms.CharField(widget=forms.HiddenInput, required=False)
-    telephone = forms.CharField(label="Do not fill out this box", required=False, widget=forms.Textarea)  # fake message box to fool bots
+    email_confirmation = forms.CharField(label="Email confirmation: humans, do not fill out this box", required=False, widget=forms.Textarea)  # fake message box to fool bots
     box2 = forms.CharField(label="Message", widget=forms.Textarea)
     referer = forms.URLField(widget=forms.HiddenInput, required=False)
+
+
+class ReportForm(forms.Form):
+    """
+    Form for reporting inappropriate content.
+    """
+    reason = forms.ChoiceField(
+        choices = BLANK_CHOICE_DASH +[(reason, reason) for reason in [
+            'Graphic or Dangerous Content',
+            'False or Misinformation',
+            'Copyright Infringement',
+            'Other'
+        ]],
+        label = 'Reason for reporting'
+    )
+    source = forms.CharField(
+        label="How did you discover this Perma Link?",
+        help_text="If possible, please include the URL where you found the Perma Link.",
+        widget=forms.Textarea
+    )
+    email = forms.EmailField(label="Your email address")
+    email_confirmation = forms.CharField(label="Email confirmation: humans, do not fill out this box", required=False, widget=forms.Textarea)  # fake message box to fool bots
+    guid = forms.CharField(widget=forms.HiddenInput, required=False)
+    referer = forms.CharField(widget=forms.HiddenInput, required=False)
+
+
+class UserOrganizationAffiliationAdminForm(ModelForm):
+    class Meta:
+        model = UserOrganizationAffiliation
+        fields = ['organization', 'expires_at']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # For new entries, only show not user_deleted organizations
+        # For existing entries, bring the form with the right organization selected even if it is deleted
+        if self.instance.pk is None:
+            self.fields['organization'].queryset = Organization.objects.filter(user_deleted=False)
+        else:
+            self.fields['organization'].queryset = Organization.objects.all_with_deleted()

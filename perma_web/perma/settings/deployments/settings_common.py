@@ -7,6 +7,7 @@ from copy import deepcopy
 this_module = sys.executable if hasattr(sys, "frozen") else __file__
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_module))))
 SERVICES_DIR = os.path.abspath(os.path.join(PROJECT_ROOT, '../services'))
+JS_WACZ_DIR = os.path.abspath(os.path.join(SERVICES_DIR, 'js-wacz'))
 
 DATABASES = {
     'default': {
@@ -35,16 +36,28 @@ SITE_ID = 1
 # to load the internationalization machinery.
 USE_I18N = True
 
-# If you set this to False, Django will not format dates, numbers and
-# calendars according to the current locale.
-USE_L10N = True
-
 # If you set this to False, Django will not use timezone-aware datetimes.
 USE_TZ = True
 
-# user-generated files
-MEDIA_ROOT = ''
-MEDIA_URL = '/media/'
+STORAGES = {
+    "default": {
+        "BACKEND": 'perma.storage_backends.S3MediaStorage',
+        "OPTIONS": {
+            "signature_version": 's3v4',
+            "default_acl": 'private'
+        }
+    },
+    "secondary": {
+        "BACKEND": 'perma.storage_backends.S3MediaStorage',
+        "OPTIONS": {
+            "signature_version": 's3v4',
+            "default_acl": 'private'
+        }
+    },
+    "staticfiles": {
+        "BACKEND": 'perma.storage_backends.StaticStorage',
+    },
+}
 
 # static files
 STATIC_ROOT = os.path.join(PROJECT_ROOT, 'static-collected')                # where to store collected static files
@@ -61,11 +74,27 @@ STATICFILES_FINDERS = (         # how to look for static files
 #    'django.contrib.staticfiles.finders.DefaultStorageFinder',
 )
 
-# static files config
-STATICFILES_STORAGE = 'perma.storage_backends.StaticStorage'
+WEBPACK_LOADER = {
+    'DEFAULT': {
+        'BUNDLE_DIR_NAME': 'bundles/',
+        'STATS_FILE': os.path.join(PROJECT_ROOT, 'webpack-stats.json'),
+    }
+}
 
-# media storage -- default_storage config
-DEFAULT_FILE_STORAGE = 'perma.storage_backends.FileSystemMediaStorage'
+# user-generated files / default_storage config
+MEDIA_URL = '/this-setting-is-not-in-use-in-any-deployments/'
+MEDIA_ROOT ='generated/'
+WARC_STORAGE = 'default'
+WARC_STORAGE_DIR = 'warcs'  # relative to MEDIA_ROOT
+WARC_PRESIGNED_URL_EXPIRES = 15 * 60
+WACZ_STORAGE = 'secondary'
+WACZ_STORAGE_DIR = 'waczs'
+WACZ_PRESIGNED_URL_EXPIRES = 15 * 60
+
+ARCHIVE_FORMATS = ['wacz']
+
+WARC_TO_WACZ_ON_DEMAND = False
+WARC_TO_WACZ_ON_DEMAND_SIZE_LIMIT = 1024 * 1024 * 100 # 100 MB
 
 TEMPLATES = [
     {
@@ -92,19 +121,19 @@ TEMPLATES = [
     },
 ]
 
-MIDDLEWARE = (
+MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'api.middleware.APISubdomainMiddleware',
+    'perma.middleware.APISubdomainMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'perma.middleware.bypass_cache_middleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'perma.middleware.AdminAuthMiddleware',
     'ratelimit.middleware.RatelimitMiddleware',
     'simple_history.middleware.HistoryRequestMiddleware',  # record request.user for model history
+    'waffle.middleware.WaffleMiddleware',
     # Uncomment the next line for simple clickjacking protection:
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # AxesMiddleware should be the last middleware in the MIDDLEWARE list.
@@ -113,28 +142,23 @@ MIDDLEWARE = (
     # If you do not want Axes to override the authentication response
     # you can skip installing the middleware and use your own views.
     'axes.middleware.AxesMiddleware',
-)
-# This defaults to 'SAMEORIGIN' w/ Django 2, but was changed to 'DENY' in Django 3
-X_FRAME_OPTIONS = 'DENY'
-
-# If the Django redis cache is configured but unavailable,
-# the ratelimiting plugin should allow all requests,
-# rather than reject them
-RATELIMIT_FAIL_OPEN = True
-
-RATELIMIT_VIEW = 'perma.views.common.rate_limit'
-CSRF_FAILURE_VIEW = 'perma.views.error_management.csrf_failure'
+    'api.middleware.CORSMiddleware'
+]
 
 ROOT_URLCONF = 'urls'
 
+APPEND_SLASH = False
+
+DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+
 # Python dotted path to the WSGI application used by Django's runserver.
 WSGI_APPLICATION = 'perma.wsgi.application'
-
 
 INSTALLED_APPS = (
     # built in apps
     'django.contrib.auth',
     'django.contrib.contenttypes',
+    'django.contrib.postgres',
     'django.contrib.sessions',
     'django.contrib.sites',
     'django.contrib.messages',
@@ -144,17 +168,17 @@ INSTALLED_APPS = (
 
     # our apps
     'perma',
-    'lockss',
+    'reporting',
 
     # third party apps
     'ratelimit',
-    'mptt',
-    'sorl.thumbnail',
     'settings_context_processor',
     'simple_history',  # record model changes
     'taggit',  # model tagging
     'webpack_loader',  # track frontend assets
     'axes',  # limit login attempts
+    'django_json_widget',
+    'waffle',  # feature flags
 
     # api
     'api',
@@ -165,11 +189,26 @@ INSTALLED_APPS = (
     'django.contrib.admin',
 )
 
+CSRF_FAILURE_VIEW = 'perma.views.error_management.csrf_failure'
+MESSAGE_STORAGE = 'django.contrib.messages.storage.fallback.FallbackStorage'
+TAGGIT_CASE_INSENSITIVE = True
+
+# Security Settings
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_NAME = '__Host-sessionid'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SAMESITE = 'Lax'
+# This defaults to 'SAMEORIGIN' w/ Django 2, but was changed to 'DENY' in Django 3
+X_FRAME_OPTIONS = 'DENY'
+REQUIRE_JS_FORM_SUBMISSIONS = True
+
+#
+# Authentication
+#
 AUTH_USER_MODEL = 'perma.LinkUser'
-
 LOGIN_REDIRECT_URL = '/manage/create/'
-LOGIN_URL = '/login'
-
+LOGIN_URL = 'user_management_limited_login'
 
 # Axes, fundamental integration
 AUTHENTICATION_BACKENDS = [
@@ -190,7 +229,6 @@ AXES_COOLOFF_TIME = 'perma.utils.cooloff_time'
 AXES_ONLY_USER_FAILURES = True  # If True, only lock based on username, and never lock based on IP if attempts exceed the limit. Otherwise utilize the existing IP and user locking logic. Default: False
 AXES_RESET_ON_SUCCESS = True  # If True, a successful login will reset the number of failed logins. Default: False
 
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -209,11 +247,21 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-PASSWORD_RESET_TIMEOUT_DAYS = 3
+# 3 days, in seconds
+PASSWORD_RESET_TIMEOUT = 3 * 24 * 60 * 60
 
-MESSAGE_STORAGE = 'django.contrib.messages.storage.fallback.FallbackStorage'
+#
+# Subscription packages/Payments
+#
 
-# subscription packages
+# No trailing slash
+STRIPE_PAYMENTS_APP_INTERNAL_URL = None
+STRIPE_PAYMENTS_APP_EXTERNAL_URL = None
+
+PERMA_PAYMENTS_TIMEOUT = 3
+PERMA_PAYMENTS_TIMESTAMP_MAX_AGE_SECONDS = 120
+PERMA_PAYMENTS_IN_MAINTENANCE = False
+
 TIERS = {
     'Individual': [
         {
@@ -273,34 +321,26 @@ BONUS_PACKAGES = [
 DEFAULT_CREATE_LIMIT = 10
 DEFAULT_CREATE_LIMIT_PERIOD = 'once'
 
-# When getting the source with wget, let's set some details
-ARCHIVE_QUOTA = '20m' # Maximum filesize
-ARCHIVE_LIMIT_RATE = '100m' # Download limit rate; TODO reduce for production
-ACCEPT_CONTENT_TYPES = [ # HTTP content-type parameters to accept
-    'text/html',
-    'text/xml',
-    'application/xhtml+xml',
-    'application/xml'
-]
-NUMBER_RETRIES = 3 # if wget fails to get a resource, try to get again this many times
-WAIT_BETWEEN_TRIES = .5 # wait between .5 and this many seconds between http requests to our source
-
-# Max file size (for our downloads)
-MAX_ARCHIVE_FILE_SIZE = 1024 * 1024 * 100  # 100 MB
-
-# Max image size for screenshots and thumbnails
-MAX_IMAGE_SIZE = 1024*1024*50  # 50 megapixels
-
+#
 # Rate limits
+#
 MINUTE_LIMIT = '6000/m'
 HOUR_LIMIT = '100000/h'
 DAY_LIMIT = '500000/d'
 REGISTER_MINUTE_LIMIT = '600/m'
-REGISTER_HOUR_LIMIT = '2000/h'
-REGISTER_DAY_LIMIT = '5000/d'
 LOGIN_MINUTE_LIMIT = '5000/m'
-LOGIN_HOUR_LIMIT = '10000/h'
-LOGIN_DAY_LIMIT = '50000/d'
+CONTACT_MINUTE_LIMIT = MINUTE_LIMIT
+CONTACT_HOUR_LIMIT = HOUR_LIMIT
+CONTACT_DAY_LIMIT = DAY_LIMIT
+REPORT_MINUTE_LIMIT = MINUTE_LIMIT
+REPORT_HOUR_LIMIT = HOUR_LIMIT
+REPORT_DAY_LIMIT = DAY_LIMIT
+
+# If the Django redis cache is configured but unavailable,
+# the ratelimiting plugin should allow all requests,
+# rather than reject them
+RATELIMIT_FAIL_OPEN = True
+RATELIMIT_VIEW = 'perma.views.common.rate_limit'
 
 #
 # Django cache
@@ -316,14 +356,32 @@ CACHE_MAX_AGES = {
     'timemap'      : 60 * 30,         # 30mins
 }
 
-# Remote cache
-CACHE_BYPASS_COOKIE_NAME = 'cloudflare-bypass-cache'
-
 # Dashboard user lists
 MAX_USER_LIST_SIZE = 50
 
+# Logging
+import logging
+class IgnoreHTTP503Filter(logging.Filter):
+    def filter(self, record):
+        # If record has status_code attribute (from Django request logger), ignore 503
+        status = getattr(record, "status_code", None)
+        if status == 503:
+            return False
+        # If status is embedded in message, attempt to detect "503"
+        msg = getattr(record, "getMessage", None)
+        try:
+            text = record.getMessage() if callable(msg) else str(record.msg)
+        except Exception:
+            text = ""
+        if "503" in text and "HTTP" in text:
+            return False
+        return True
+
 from django.utils.log import DEFAULT_LOGGING
 LOGGING = deepcopy(DEFAULT_LOGGING)
+LOGGING['filters']['ignore_503'] = {
+    '()': IgnoreHTTP503Filter,
+}
 LOGGING['handlers'] = {
     **LOGGING['handlers'],
     # log everything to console on both dev and prod
@@ -335,7 +393,7 @@ LOGGING['handlers'] = {
     # custom error email template
     'mail_admins': {
         'level': 'ERROR',
-        'filters': ['require_debug_false'],
+        'filters': ['ignore_503', 'require_debug_false'],
         'class': 'perma.reporter.CustomAdminEmailHandler'
     },
     # log to file
@@ -365,6 +423,10 @@ LOGGING['loggers'] = {
     'warcprox': {
         'level': 'CRITICAL'
     },
+    # prevent IA's own error emails, in favor of our own handling
+    'internetarchive': {
+        'level': 'CRITICAL'
+    },
     'celery.django': {
         'level': 'INFO',
         'handlers': ['console', 'mail_admins', 'file'],
@@ -372,8 +434,12 @@ LOGGING['loggers'] = {
     # show info for our first-party apps
     **{
         app_name: {'level': 'INFO'}
-        for app_name in ('api', 'lockss', 'perma',)
+        for app_name in ('api', 'perma',)
     },
+    # show info for our invoke tasks
+    'tasks': {
+        'level': 'INFO'
+    }
 }
 LOGGING['formatters'] = {
     **LOGGING['formatters'],
@@ -381,39 +447,6 @@ LOGGING['formatters'] = {
         'format': '%(asctime)s [%(levelname)s] %(filename)s %(lineno)d: %(message)s'
     },
 }
-
-# IP ranges we won't archive.
-# Via http://en.wikipedia.org/wiki/Reserved_IP_addresses
-BANNED_IP_RANGES = [
-    "0.0.0.0/8",
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.0.0.0/29",
-    "192.0.2.0/24",
-    "192.88.99.0/24",
-    "192.168.0.0/16",
-    "198.18.0.0/15",
-    "198.51.100.0/24",
-    "203.0.113.0/24",
-    "224.0.0.0/4",
-    "240.0.0.0/4",
-    "255.255.255.255/32",
-    "::/128",
-    "::1/128",
-    "::ffff:0:0/96",
-    "100::/64",
-    "64:ff9b::/96",
-    "2001::/32",
-    "2001:10::/28",
-    "2001:db8::/32",
-    "2002::/16",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-]
 
 # Proxy whitelisting:
 # If TRUSTED_PROXIES is set, wsgi.py will validate that requests come through these proxies,
@@ -432,18 +465,15 @@ BANNED_IP_RANGES = [
 
 # then wsgi.py will make sure that request.META['REMOTE_ADDR'] = '<client ip>'. But if <nginx server ip> or <cloudflare ip>
 # fail to match, wsgi.py will return a 400 Bad Request.
-
 TRUSTED_PROXIES = []
 CLOUDFLARE_DIR = os.path.join(SERVICES_DIR, 'cloudflare')
-
 # Http header we will use to determine/test/validate a client's IP address.
 CLIENT_IP_HEADER = 'REMOTE_ADDR'
 
+#
 # Celery settings
-if os.environ.get('DOCKERIZED'):
-    CELERY_BROKER_URL = 'redis://perma-redis:6379/1'
-else:
-    CELERY_BROKER_URL = 'redis://guest:guest@localhost::6379/1'
+#
+CELERY_BROKER_URL = 'redis://perma-redis:6379/1'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -451,229 +481,73 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TASK_SOFT_TIME_LIMIT=300
 # If a task is running longer than seven minutes, kill it
 CELERY_TASK_TIME_LIMIT = 420
-# Estimate of active celery workers
-# https://github.com/harvard-lil/perma/issues/2438
-# this value will be reset in settings.utils.post_processing
-WORKER_COUNT = 2
 
 CELERY_TASK_ROUTES = {
-    'perma.tasks.upload_to_internet_archive': {'queue': 'ia'},
-    'perma.tasks.delete_from_internet_archive': {'queue': 'ia'},
-    'perma.tasks.delete_all_from_internet_archive': {'queue': 'ia'},
-    'perma.tasks.upload_all_to_internet_archive': {'queue': 'ia'},
-    'perma.tasks.sync_subscriptions_from_perma_payments': {'queue': 'background'},
-    'perma.tasks.cache_playback_status_for_new_links': {'queue': 'background'},
-    'perma.tasks.cache_playback_status': {'queue': 'background'},
-    'perma.tasks.populate_warc_size_fields': {'queue': 'background'},
-    'perma.tasks.populate_warc_size': {'queue': 'background'},
+    'perma.celery_tasks.sync_subscriptions_from_perma_payments': {'queue': 'background'},
+    'perma.celery_tasks.cache_playback_status_for_new_links': {'queue': 'background'},
+    'perma.celery_tasks.cache_playback_status': {'queue': 'background'},
+    'perma.celery_tasks.populate_warc_size_fields': {'queue': 'background'},
+    'perma.celery_tasks.populate_warc_size': {'queue': 'background'},
+    'perma.celery_tasks.populate_wacz_size': {'queue': 'background'},
+    'perma.celery_tasks.fix_cached_folder_paths': {'queue': 'background'},
+    'perma.celery_tasks.fix_cached_folder_path': {'queue': 'background'},
+    # the 'ia' queue is for tasks that alter or may alter Internet Archive's records
+    'perma.celery_tasks.upload_link_to_internet_archive': {'queue': 'ia'},
+    'perma.celery_tasks.delete_link_from_daily_item': {'queue': 'ia'},
+    # the 'ia-readonly' queue is for internal tasks that only affect our database
+    'perma.celery_tasks.queue_file_uploaded_confirmation_tasks': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.confirm_file_uploaded_to_internet_archive': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.queue_file_deleted_confirmation_tasks': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.confirm_file_deleted_from_daily_item': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.conditionally_queue_internet_archive_uploads_for_date_range': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.queue_internet_archive_deletions': {'queue': 'ia-readonly'},
+    'perma.celery_tasks.convert_warc_to_wacz': {'queue': 'wacz-conversion'},
+    'perma.celery_tasks.deactivate_expired_sponsored_users': {'queue': 'background'},
+    'perma.celery_tasks.warn_expiring_sponsored_users': {'queue': 'background'},
+    'perma.celery_tasks.remove_expired_organization_user_affiliations': {'queue': 'background'},
+    'perma.celery_tasks.warn_expiring_organization_users': {'queue': 'background'},
+    'perma.celery_tasks.send_user_email_from_bulk_addition': {'queue': 'background'}
 }
-
-HOST = 'perma.test:8000'
-ALLOWED_HOSTS = ['perma.test', 'api.perma.test']
-API_SUBDOMAIN = 'api'
-
-# internet archive stuff
-UPLOAD_TO_INTERNET_ARCHIVE = False
-INTERNET_ARCHIVE_MAX_UPLOAD_SIZE = 1024 * 1024 * 100
-INTERNET_ARCHIVE_COLLECTION = 'perma_cc'
-INTERNET_ARCHIVE_IDENTIFIER_PREFIX = 'perma_cc_'
-# Find these at https://archive.org/account/s3.php :
-INTERNET_ARCHIVE_ACCESS_KEY = ''
-INTERNET_ARCHIVE_SECRET_KEY = ''
-
-from dateutil.relativedelta import relativedelta
-LINK_EXPIRATION_TIME = relativedelta(years=2)
-
-#
-# Playback
-#
-
-# The host and port loaded by Perma's iframe during playback.
-# In production, this is highly recommended to be different from HOST.
-# Must be publicly available.
-PLAYBACK_HOST = 'perma-archives.test:8092'
-
-# The Webrecorder API, used internally by Perma to create WR sessions and upload
-# warcs for playback. Not in use if ENABLE_WR_PLAYBACK = False
-#
-# Use port 80 if running on same docker instance
-#
-# Or, if WR is on remote machine and/or not running Perma in Docker,
-# use the remote host and the port that is being publicly exposed
-# and mapped to port 80 on the nginx container by docker-compose. E.g.
-# http://remote-webrecorder-host:8089
-WR_API = 'http://perma-archives.test/api/v1'
-
-# WR Credentials for the public user that stores all public collections.
-# Change init_wr.sh if you change these.
-WR_PERMA_USER = 'public'
-WR_PERMA_PASSWORD = 'Test123Test123'
-
-
-# Time (in seconds) to wait for upload to finalize
-# after data fully uploaded to Webreccorder
-# Or, assume error if upload not done after this many seconds
-WR_REPLAY_UPLOAD_TIMEOUT = 25
-
-# We have WR sessions set to expire after 120s (see wr-custom.yaml).
-# We don't want the cookie to expire mid-upload or mid-playback.
-# Use this setting to specify how old a WR session cookie Perma is
-# willing to use, to make the above unlikely. Should be between
-# session.durations.short.total (wr-custom.yaml) and
-# WR_REPLAY_UPLOAD_TIMEOUT (Perma settings)
-WR_COOKIE_PERMITTED_AGE = 60
-
-# Seconds to wait before retrying a failed WR playback.
-WR_PLAYBACK_RETRY_AFTER = 1
-
-# We're finding that warcs aren't always available for download from S3
-# instantly, immediately after upload. How long do we want to wait for S3
-# to catch up, during first playback, before raising an error?
-WARC_AVAILABLE_RETRIES = 9
-
-CHECK_WARC_BEFORE_PLAYBACK = False
-
-# Disable SameSite protection (https://www.owasp.org/index.php/SameSite)
-# So that we can set iframe cookies properly, when we receive the redirect from Webrecorder
-# https://docs.djangoproject.com/en/3.0/ref/settings/#std:setting-SESSION_COOKIE_SAMESITE
-SESSION_COOKIE_SAMESITE = None
-
-# Sorl settings. This relates to our thumbnail creation.
-# The prod and dev configs are considerably different. See those configs for details.
-THUMBNAIL_ENGINE = 'sorl.thumbnail.engines.wand_engine.Engine'
-THUMBNAIL_FORMAT = 'PNG'
-THUMBNAIL_COLORSPACE = None
-# Temporarily work around for https://github.com/jazzband/sorl-thumbnail/issues/476
-TEMPLATE_DEBUG = False
-
-# Relative to MEDIA_ROOT
-THUMBNAIL_STORAGE_PATH = 'thumbnails'
-
-# security settings -- set these to true if SSL is available
-SECURE_SSL_REDIRECT = False
-SESSION_COOKIE_SECURE = False
-
-API_VERSION = 1
-
-USE_ANALYTICS = False
-USE_ANALYTICS_VIEWS = [
-    'landing',
-    'about',
-    'stats',
-    'copyright_policy',
-    'terms_of_service',
-    'privacy_policy',
-    'return_policy',
-    'contingency_plan',
-    'docs',
-    'docs_perma_link_creation',
-    'docs_libraries',
-    'docs_faq',
-    'docs_accounts',
-    'dev_docs',
-    'sign_up',
-    'sign_up_courts',
-    'sign_up_faculty',
-    'sign_up_journals',
-    'sign_up_firm',
-    'libraries'
-]
-
-TEMPLATE_VISIBLE_SETTINGS = (
-    'API_VERSION',
-    'SECURE_SSL_REDIRECT',
-    'DEBUG',
-    'ENABLE_SPONSORED_USERS',
-    'ENABLE_BONUS_LINKS',
-    'PLAYBACK_HOST',
-    'HOST',
-    'USE_ANALYTICS',
-    'USE_ANALYTICS_VIEWS',
-    'PLAYBACK_UI_JS_URL'
-)
-
-
-CAPTURE_BROWSER = 'Chrome'  # some support for 'Firefox'
-DISABLE_DEV_SHM = False
-CAPTURE_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36"
-PERMA_USER_AGENT_SUFFIX = "(Perma.cc)"
-PERMABOT_USER_AGENT_SUFFIX = "(Perma.cc bot)"
-DOMAINS_REQUIRING_UNIQUE_USER_AGENT = []
-DOMAINS_REQUIRING_BOT_USER_AGENT = []
-PROXY_CAPTURES = False
-PROXY_ADDRESS = 'localhost:9050'
-DOMAINS_TO_PROXY = []
-PROXY_POST_LOAD_DELAY = 5
-CAPTURE_HEADERS = {
-    "Accept": "*/*",
-    "Accept-Encoding": "*",
-    "Accept-Language": "*",
-    "Connection": "keep-alive"
-}
-
-APPEND_SLASH = False
 
 # Schedule celerybeat jobs.
 # These will be added to CELERY_BEAT_SCHEDULE in settings.utils.post_processing
 CELERY_BEAT_JOB_NAMES = []
 
+# Internet Archive stuff
+INTERNET_ARCHIVE_MAX_UPLOAD_SIZE = 1024 * 1024 * 100
+INTERNET_ARCHIVE_COLLECTION = 'perma_cc'
+INTERNET_ARCHIVE_IDENTIFIER_PREFIX = 'perma_cc_'
+INTERNET_ARCHIVE_DAILY_IDENTIFIER_PREFIX = 'daily_perma_cc_'
+# Find these at https://archive.org/account/s3.php :
+INTERNET_ARCHIVE_ACCESS_KEY = ''
+INTERNET_ARCHIVE_SECRET_KEY = ''
+# Rate limiting
+INTERNET_ARCHIVE_MAX_SIMULTANEOUS_UPLOADS = 499  # as of 2023-03-21, this is our "accesskey_ration"
+INTERNET_ARCHIVE_PERMITTED_PROXIMITY_TO_GLOBAL_RATE_LIMIT = 500
+INTERNET_ARCHIVE_PERMITTED_PROXIMITY_TO_RATE_LIMIT = 50
+INTERNET_ARCHIVE_RETRY_FOR_RATELIMITING_LIMIT = None
+INTERNET_ARCHIVE_RETRY_FOR_ERROR_LIMIT = 2
+INTERNET_ARCHIVE_EXCEPTION_IF_RETRIES_EXCEEDED = False
+INTERNET_ARCHIVE_ITEM_LOCK_RETRIES = 4
+INTERNET_ARCHIVE_RETRY_FOR_CONFIRMATION_CONNECTION_ERROR = 3
+INTERNET_ARCHIVE_UPLOAD_MAX_TIMEOUTS = None
+# Other
+INTERNET_ARCHIVE_EXCEPTION_IF_NO_ITEM = False
+INTERNET_ARCHIVE_UPLOAD_MAX_TMEOUTS = 2
 
-# tests
-TEST_RUNNER = 'django.test.runner.DiscoverRunner'  # In Django 1.7, including this silences a warning about tests
-USE_SAUCE = False  # Default to local functional tests
-SAUCE_USERNAME = None
-SAUCE_ACCESS_KEY = None
-TESTING = False
-REMOTE_SELENIUM = False
-REMOTE_SELENIUM_HOST = None
+#
+# Hosts
+#
 
-WARC_STORAGE_DIR = 'warcs'  # relative to MEDIA_ROOT
+HOST = 'perma.test:8000'
+ALLOWED_HOSTS = ['perma.test', 'api.perma.test']
+API_SUBDOMAIN = 'api'
 
+#
+# API
+#
 
-### LOCKSS ###
-
-from datetime import timedelta
-ARCHIVE_DELAY = timedelta(hours=24)
-
-USE_LOCKSS_REPLAY = False  # whether to replay captures from LOCKSS, if servers are available
-LOCKSS_CONTENT_IPS = ""  # IPs of Perma servers allowed to play back LOCKSS content -- e.g. "10.1.146.0/24;140.247.209.64"
-LOCKSS_CRAWL_INTERVAL = "12h"
-LOCKSS_QUORUM = 3
-LOCKSS_DEBUG_IPS = False
-
-ENABLE_AV_CAPTURE = False
-RESOURCE_LOAD_TIMEOUT = 45 # seconds to wait for at least one resource to load before giving up on capture
-SHUTDOWN_GRACE_PERIOD = 10 # seconds to allow slow threads to finish before we complete the capture job
-MAX_PROXY_THREADS = 100
-MAX_PROXY_QUEUE_SIZE = 500 # this is the default in https://github.com/internetarchive/warcprox/blob/ee6bc151e1758a50f8af2b8f2d9746aa56ec95fb/warcprox/main.py#L192
-
-WEBPACK_LOADER = {
-    'DEFAULT': {
-        'BUNDLE_DIR_NAME': 'bundles/',
-        'STATS_FILE': os.path.join(PROJECT_ROOT, 'webpack-stats.json'),
-    }
-}
-
-# set a default reply-to email address, the same as Django's DEFAULT_FROM_EMAIL
-# in production, must be different than the production DEFAULT_FROM_EMAIL
-DEFAULT_REPLYTO_EMAIL = 'webmaster@localhost'
-
-# Campaign Monitor (override if you want to actually interact with to
-# campaign monitor)
-CAMPAIGN_MONITOR_AUTH = {'api_key':'fake'}
-CAMPAIGN_MONITOR_REGISTRAR_LIST = 'fake'
-
-# Directs contact form to registrar users under certain circumstances
-CONTACT_REGISTRARS = False
-
-TAGGIT_CASE_INSENSITIVE = True
-
-# If technical problems prevent proper analysis of a capture,
-# should we default to private?
-PRIVATE_LINKS_ON_FAILURE = False
-PRIVATE_LINKS_IF_GENERIC_NOARCHIVE = True
-
-
+API_VERSION = 1
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'api.authentication.TokenAuthentication',  # authenticate with ApiKey token
@@ -686,26 +560,137 @@ REST_FRAMEWORK = {
     'SEARCH_PARAM': 'q',  # query string key for plain text searches
     'ORDERING_PARAM': 'order_by',  # query string key to specify ordering of results
 }
+API_MAX_PAGES = 10
+API_LONG_PAGE_SIZE = 500
 
-# If using geocoding
-# Via https://console.developers.google.com/apis/api/geocoding_backend/overview
-GEOCODING_KEY = None
+#
+# Playback
+#
 
-# override django-storages default
-AWS_DEFAULT_ACL = 'private'
+PLAYBACK_HOST = 'rejouer.perma.test:8080'
 
-PERMA_PAYMENTS_TIMEOUT = 2
-PERMA_PAYMENTS_TIMESTAMP_MAX_AGE_SECONDS = 120
-PERMA_PAYMENTS_IN_MAINTENANCE = False
 
-ENABLE_SPONSORED_USERS = False
+#
+# Capture
+#
+CAPTURE_ENGINE = 'scoop-api'  # perma|scoop-api
+PRIVATE_BY_POLICY_DOMAINS = []
+SCOOP_API_KEY = None
+SCOOP_API_URL = None
+SCOOP_API_USERAGENT = 'Perma capture worker'
+SCOOP_POLL_FREQUENCY = 0.5
+SCOOP_POLL_NETWORK_ERROR_LIMIT = 10
+SCOOP_WACZ_DOWNLOAD_RETRIES = 3
 
-OFFER_CLIENT_SIDE_PLAYBACK = False
-USERS_WITH_CLIENT_SIDE_PLAYBACK = []
-PLAYBACK_UI_JS_URL = 'https://unpkg.com/replaywebpage@1.0.2/ui.js'
-SERVICE_WORKER_URL = 'https://unpkg.com/replaywebpage@1.0.2/sw.js'
+BETA_SCOOP_API_KEY = None
+BETA_SCOOP_API_URL = None
 
-ENABLE_BONUS_LINKS = False
+# Max file size (for our downloads)
+MAX_ARCHIVE_FILE_SIZE = 1024 * 1024 * 100  # 100 MB
 
+# Seconds to wait for website to respond during URL validation:
+# set to the Scoop API's own 502 threshold, currently 60s, plus two seconds for network conditions
+RESOURCE_LOAD_TIMEOUT = 60 + 2
+
+# tests
+TEST_RUNNER = 'django.test.runner.DiscoverRunner'  # In Django 1.7, including this silences a warning about tests
+TESTING = False
+
+### MIRRORS ###
+
+from datetime import timedelta
+ARCHIVE_DELAY = timedelta(hours=24)
+
+#
+# Email
+#
+
+# set a default reply-to email address, the same as Django's DEFAULT_FROM_EMAIL
+# in production, must be different than the production DEFAULT_FROM_EMAIL
+DEFAULT_REPLYTO_EMAIL = 'webmaster@localhost'
+
+# Campaign Monitor (override if you want to actually interact with to
+# campaign monitor)
+CAMPAIGN_MONITOR_AUTH = {'api_key':'fake'}
+CAMPAIGN_MONITOR_REGISTRAR_LIST = 'fake'
+
+# Directs contact form to registrar users under certain circumstances
+CONTACT_REGISTRARS = True
+
+# Virus Scanning
 SCAN_UPLOADS = False
 SCAN_URL = ''
+# Requests connect/read timeouts in seconds; scanner failures allow uploads.
+SCAN_TIMEOUT = (5, 60)
+
+# Analytics
+USE_ANALYTICS = False
+USE_ANALYTICS_VIEWS = [
+    'landing',
+    'about',
+    'copyright_policy',
+    'terms_of_service',
+    'privacy_policy',
+    'return_policy',
+    'contingency_plan',
+    'docs',
+    'docs_perma_link_creation',
+    'docs_registrars',
+    'docs_faq',
+    'docs_accounts',
+    'dev_docs',
+    'sign_up',
+    'sign_up_courts',
+    'sign_up_orgs',
+    'sign_up_libraries'
+]
+
+# If USE_SENTRY is True, SENTRY_DSN must be set
+USE_SENTRY = False
+SENTRY_DSN = ''
+SENTRY_ENVIRONMENT = 'dev'
+SENTRY_TRACES_SAMPLE_RATE = 1.0
+SENTRY_SEND_DEFAULT_PII = False
+
+# Before deployment, we suppress the addition of new capture jobs when this file is present
+DEPLOYMENT_SENTINEL = '/tmp/perma-deployment-pending'
+
+# for inclusion in datapackage.json for user uploads; to be replaced with a
+# short commit hash in deployments
+PERMA_VERSION = 'dev'
+
+# Which settings should be available in all Django templates,
+# without needing to explicitly pass them via the view?
+TEMPLATE_VISIBLE_SETTINGS = (
+    'API_VERSION',
+    'SECURE_SSL_REDIRECT',
+    'DEBUG',
+    'DEFAULT_FROM_EMAIL',
+    'HOST',
+    'USE_ANALYTICS',
+    'USE_ANALYTICS_VIEWS',
+    'USE_SENTRY',
+    'SENTRY_DSN',
+    'SENTRY_ENVIRONMENT',
+    'SENTRY_TRACES_SAMPLE_RATE',
+    'PLAYBACK_HOST'
+)
+
+# schema viewer
+VIEW_SCHEMA = False
+
+# Custom staff-invited new-user emails for specific registrars.
+# Used by send_staff_invited_new_user_email.
+# Format:
+# CUSTOM_EMAILS_FOR_REGISTRAR = {
+#     1: {  # registrar id, as an int
+#         # template_file is optional, below is the default value
+#         'template_file': 'email/new_user_added_by_other_custom.txt',
+#         # below are the context values required for the default template;
+#         # supply your own keys/values as necessary if specifying your own template.
+#         'subject': 'Custom email subject line',
+#         'opening': 'Opening paragraph, before the activation link section',
+#         'closing': 'Closing paragraph, after the activation link section.',
+#     },
+# }
+CUSTOM_EMAILS_FOR_REGISTRAR = {}

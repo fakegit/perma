@@ -1,6 +1,7 @@
 from .settings_common import *
 
 import os
+import re
 
 DEBUG = True
 
@@ -9,7 +10,19 @@ LOGGING_DIR = os.path.join(SERVICES_DIR, 'logs')
 LOGGING['handlers']['file']['filename'] = os.path.join(LOGGING_DIR, 'django.log')
 
 # user-generated files
-MEDIA_ROOT = os.path.join(SERVICES_DIR, 'django/generated_assets/')
+
+
+STORAGES["default"]["OPTIONS"]["endpoint_url"] = 'https://perma.minio.test:9000'
+STORAGES["default"]["OPTIONS"]["access_key"] = 'accesskey'
+STORAGES["default"]["OPTIONS"]["secret_key"] = 'secretkey'
+STORAGES["default"]["OPTIONS"]["bucket_name"] = 'perma-storage'
+STORAGES["default"]["OPTIONS"]["verify"] = False
+
+STORAGES["secondary"]["OPTIONS"]["endpoint_url"] = 'https://perma.minio.test:9000'
+STORAGES["secondary"]["OPTIONS"]["access_key"] = 'accesskey'
+STORAGES["secondary"]["OPTIONS"]["secret_key"] = 'secretkey'
+STORAGES["secondary"]["OPTIONS"]["bucket_name"] = 'perma-secondary-storage'
+STORAGES["secondary"]["OPTIONS"]["verify"] = False
 
 # static files
 STATIC_ROOT = os.path.join(SERVICES_DIR, 'django/static_assets/')
@@ -41,7 +54,7 @@ if os.environ.get('DEBUG_TOOLBAR'):
     DEBUG_TOOLBAR_CONFIG = {
         'SHOW_TOOLBAR_CALLBACK': 'perma.utils.show_debug_toolbar'  # we have to override this check because the default depends on IP address, which doesn't work inside Vagrant
     }
-    MIDDLEWARE = ('debug_toolbar.middleware.DebugToolbarMiddleware',) + MIDDLEWARE
+    MIDDLEWARE = ['debug_toolbar.middleware.DebugToolbarMiddleware'] + MIDDLEWARE
 
 # django_extensions
 try:
@@ -55,22 +68,14 @@ except ImportError:
     pass
 
 
-# Our Sorl thumbnail stuff. In prod we use Redis, we'll just use
-# the local uncached DB here in dev.
-THUMBNAIL_KVSTORE = 'sorl.thumbnail.kvstores.cached_db_kvstore.KVStore'
-
-
 #
 # Perma Payments
 #
-PURCHASE_URL = 'http://localhost/purchase/'
-PURCHASE_HISTORY_URL = 'http://perma-payments/purchase-history/'
-ACKNOWLEDGE_PURCHASE_URL = 'http://perma-payments/acknowledge-purchase/'
-SUBSCRIBE_URL = 'http://localhost/subscribe/'
-CANCEL_URL = 'http://localhost/cancel-request/'
-SUBSCRIPTION_STATUS_URL = 'http://perma-payments/subscription/'
-UPDATE_URL = 'http://localhost/update/'
-CHANGE_URL = 'http://localhost/change/'
+
+# For now, point at an external Perma Payments application,
+# assumed to be running on the Docker host machine on port 8002
+STRIPE_PAYMENTS_APP_INTERNAL_URL = 'http://host.docker.internal:8002'
+STRIPE_PAYMENTS_APP_EXTERNAL_URL = 'http://perma-payments.test:8002'
 
 # Perma.cc encryption keys for communicating with Perma-Payments
 # generated using perma_payments.security.generate_public_private_keys
@@ -86,5 +91,32 @@ PERMA_PAYMENTS_ENCRYPTION_KEYS = {
 
 # Upload scanning
 SCAN_UPLOADS = True
-SCAN_URL = 'http://filecheck:8888/scan/'
+SCAN_URL = 'http://filecheck:8080/scan/'
 
+
+# Scoop
+SCOOP_API_URL = 'http://scoop-rest-api:5000/'
+if not SCOOP_API_KEY:
+    try:
+        # Extract the latest API key from the file.
+        # This approach could be slow if the file gets too long... but I'm not worried about it.
+        with open('/tmp/scoop_access_key/access_key.txt', 'r') as f:
+            last_line = f.readlines()[-1]
+            match = re.search(r': (.*?) ', last_line)
+            SCOOP_API_KEY = match.groups()[0]
+    except Exception:
+        print("Did not locate Scoop API Key.")
+
+
+# schema viewer
+VIEW_SCHEMA = True
+
+if VIEW_SCHEMA:
+    try:
+        import schema_viewer
+        INSTALLED_APPS += (
+            'schema_viewer',
+        )
+    except ImportError:
+        VIEW_SCHEMA = False
+        print("django-schema-viewer is not installed")

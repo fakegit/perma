@@ -26,7 +26,7 @@
                 {% endif %}
 
                 <li><a href="{% url 'user_management_manage_registrar_user' %}">Registrar users</a></li>
-                {% if ENABLE_SPONSORED_USERS %}<li><a href="{% url 'user_management_manage_sponsored_user' %}">Sponsored users</a></li>{% endif %}
+                <li><a href="{% url 'user_management_manage_sponsored_user' %}">Sponsored users</a></li>
                 <li><a href="{% url 'user_management_manage_organization' %}">Organizations</a></li>
                 <li><a href="{% url 'user_management_manage_organization_user' %}">Organization users</a></li>
 
@@ -46,21 +46,21 @@
             <li><h3 class="dropdown-header">Admin Only</h3>
               <ul class="dropdown-inner-list">
                 <li><a href="{% url 'admin:index' %}">Admin console</a></li>
-                <li><a href="{% url 'user_management_stats' %}">Site stats</a></li>
+                <li><a href="{% url 'admin_stats' %}">Site stats</a></li>
               </ul>
             </li>
           <li class="divider"></li>
           {% endif %}
           <li><h3 class="dropdown-header">Settings</h3>
             <ul class="dropdown-inner-list">
-              <li><a href="{% url 'user_management_settings_profile' %}">Profile</a></li>
-              <li><a href="{% url 'user_management_settings_password' %}">Password</a></li>
+              <li><a href="{% url 'settings_profile' %}">Profile</a></li>
+              <li><a href="{% url 'settings_password' %}">Password</a></li>
               {% if request.user.can_view_usage_plan %}
-                <li><a href="{% url 'user_management_settings_usage_plan' %}">Usage Plan</a></li>
+                <li><a href="{% url 'settings_usage_plan' %}">Usage Plan</a></li>
               {% endif %}
-              <li><a href="{% url 'user_management_settings_tools' %}">Tools</a></li>
+              <li><a href="{% url 'settings_tools' %}">Tools</a></li>
               {% if request.user.is_organization_user or request.user.is_registrar_user or request.user.has_registrar_pending %}
-                <li><a href="{% url 'user_management_settings_affiliations' %}">Your affiliations</a></li>
+                <li><a href="{% url 'settings_affiliations' %}">Your affiliations</a></li>
               {% endif %}
             </ul>
           </li>
@@ -78,7 +78,6 @@
     {% else %}
       <li><a href="{{ base_url }}{% url 'about' %}" class="navbar-link">About Perma.cc</a></li>
       <li><a href="{{ base_url }}{% url 'docs' %}" class="navbar-link">Guide</a></li>
-      <li><a href="https://blogs.law.harvard.edu/perma/" class="navbar-link">Blog</a></li>
       <li><a href="{{ base_url }}{% url 'sign_up' %}" class="btn _nav{% if this_page == 'sign_up' %} this-page{% endif %}">Sign up</a></li>
       <li><a href="{{ base_url }}{% url 'user_management_limited_login' %}" class="navbar-link _login">Log in</a></li>
     {% endif %}

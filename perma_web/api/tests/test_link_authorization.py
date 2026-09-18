@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from django.urls import reverse
 
 from .utils import TEST_ASSETS_DIR, ApiResourceTestCase, ApiResourceTransactionTestCase
@@ -7,7 +8,7 @@ from perma.models import Link, LinkUser, Folder, Capture
 from django.utils import timezone
 from datetime import timedelta
 from django.core.files.uploadedfile import SimpleUploadedFile
-from mock import patch
+from unittest.mock import patch
 
 
 class LinkAuthorizationMixin():
@@ -17,6 +18,11 @@ class LinkAuthorizationMixin():
                 'fixtures/folders.json',
                 'fixtures/api_keys.json',
                 'fixtures/archive.json']
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+
 
     def setUp(self):
         super(LinkAuthorizationMixin, self).setUp()
@@ -38,6 +44,7 @@ class LinkAuthorizationMixin():
 
         self.link = Link.objects.get(pk="3SLN-JHX9")
         self.unrelated_link = Link.objects.get(pk="7CF8-SS4G")
+        self.capture_view_link = Link.objects.get(pk="ABCD-0007")
         self.private_link_by_user = Link.objects.get(pk="ABCD-0001")
         self.private_link_by_takedown = Link.objects.get(pk="ABCD-0004")
         self.unlisted_link = Link.objects.get(pk="ABCD-0005")
@@ -51,10 +58,12 @@ class LinkAuthorizationMixin():
         self.list_url = reverse('api:archives')
         self.link_url = self.get_link_url(self.link)
         self.unrelated_link_url = self.get_link_url(self.unrelated_link)
+        self.capture_view_link_url = self.get_link_url(self.capture_view_link)
         self.in_progress_link_url = self.get_link_url(self.in_progress_link)
 
         self.patch_data = {'notes': 'These are new notes',
-                           'title': 'This is a new title'}
+                           'title': 'This is a new title',
+                           'default_to_screenshot_view': True}
 
     def get_public_link_url(self, link):
         return "{0}/{1}".format(self.public_list_url, link.pk)
@@ -65,19 +74,15 @@ class LinkAuthorizationMixin():
 
 class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
 
+    def folder_archives_url(self, folder):
+        return "{0}/folders/{1}/archives".format(self.url_base, folder.pk)
+
     #######
     # GET #
     #######
 
     def test_should_allow_logged_out_users_to_get_list(self):
         self.successful_get(self.public_list_url)
-
-    def test_should_allow_logged_out_users_to_get_link_detail(self):
-        self.successful_get(self.get_public_link_url(self.link))
-
-    def test_should_reject_logged_out_users_getting_private_detail(self):
-        self.rejected_get(self.get_public_link_url(self.private_link_by_user),
-                          expected_status_code=404)
 
     def test_should_allow_logged_in_users_to_get_logged_in_list(self):
         self.successful_get(self.list_url, user=self.regular_user)
@@ -97,11 +102,62 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
     def test_should_reject_logged_out_users_getting_logged_in_detail(self):
         self.rejected_get(self.link_url)
 
+    ##########################
+    # Listing folder archives #
+    ##########################
+
+    def test_should_allow_user_to_list_archives_in_own_folder(self):
+        self.successful_get(self.folder_archives_url(self.regular_user.root_folder),
+                            user=self.regular_user)
+
+    def test_should_allow_org_user_to_list_archives_in_org_shared_folder(self):
+        self.successful_get(self.folder_archives_url(self.link.organization.shared_folder),
+                            user=self.org_user)
+
+    def test_should_allow_related_org_user_to_list_archives_in_org_shared_folder(self):
+        self.successful_get(self.folder_archives_url(self.link.organization.shared_folder),
+                            user=self.related_org_user)
+
+    def test_should_allow_registrar_user_to_list_archives_in_registrar_org_folder(self):
+        self.successful_get(self.folder_archives_url(self.link.organization.shared_folder),
+                            user=self.registrar_user)
+
+    def test_should_allow_admin_to_list_archives_in_any_folder(self):
+        self.successful_get(self.folder_archives_url(self.regular_user.root_folder),
+                            user=self.admin_user)
+
+    def test_should_reject_listing_archives_in_other_users_folder(self):
+        self.rejected_get(self.folder_archives_url(self.org_user.root_folder),
+                          user=self.regular_user,
+                          expected_status_code=403)
+
+    def test_should_reject_listing_archives_in_unrelated_org_folder(self):
+        self.rejected_get(self.folder_archives_url(self.link.organization.shared_folder),
+                          user=self.unrelated_org_user,
+                          expected_status_code=403)
+
+    def test_should_reject_logged_out_user_listing_folder_archives(self):
+        self.rejected_get(self.folder_archives_url(self.regular_user.root_folder))
+
+    def test_should_return_404_for_nonexistent_folder_archives(self):
+        url = "{0}/folders/{1}/archives".format(self.url_base, 99999)
+        self.rejected_get(url, user=self.regular_user, expected_status_code=404)
+
+    def test_folder_archives_only_contains_links_from_that_folder(self):
+        folder = self.regular_user.root_folder
+        data = self.successful_get(self.folder_archives_url(folder), user=self.regular_user)
+        returned_guids = {obj['guid'] for obj in data['objects']}
+        folder_link_guids = set(
+            folder.links.filter(user_deleted=False).values_list('guid', flat=True)
+        )
+        self.assertTrue(returned_guids.issubset(folder_link_guids),
+                        f"Returned links {returned_guids - folder_link_guids} are not in folder {folder.pk}")
+
     ###########
     # Editing #
     ###########
 
-    def test_should_allow_link_owner_to_patch_notes_and_title(self):
+    def test_should_allow_link_owner_to_patch_notes_and_title_and_screenshot(self):
         self.successful_patch(self.unrelated_link_url, user=self.org_user, data=self.patch_data)
 
     def test_should_reject_patch_from_users_who_dont_own_unrelated_link(self):
@@ -115,7 +171,7 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
     def test_should_allow_patch_from_staff(self):
         self.successful_patch(self.unrelated_link_url, user=self.admin_user, data=self.patch_data)
 
-    def test_should_allow_link_creator_to_patch_notes_and_title(self):
+    def test_should_allow_link_creator_to_patch_notes_and_title_and_screenshot(self):
         self.successful_patch(self.link_url, user=self.link.created_by, data=self.patch_data)
 
     def test_should_allow_member_of_links_org_to_patch_notes_and_title(self):
@@ -132,10 +188,21 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
                             expected_status_code=403)
 
 
+    @pytest.mark.uses_storage
     def test_should_allow_user_to_patch_with_file(self):
+        # fix up our old-fashioned test fixture to suit this test:
+        # - the archive_timestamp needs to be adjusted so that this link is in the patchable window
+        # - warc_size and wacz_size need to be set, as would be the case if this "successful"
+        #   capture were properly associated with actual web archive files, which is always
+        #   the case outside of tests
         self.link.archive_timestamp = timezone.now() + timedelta(1)
+        self.link.wacz_size = 1
         self.link.save()
+
+        self.link.refresh_from_db()
+
         old_primary_capture = self.link.primary_capture
+
         with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.pdf'), 'rb') as test_file:
             data=test_file.read()
             file_content = SimpleUploadedFile("test.pdf", data, content_type="application/pdf")
@@ -145,6 +212,13 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
                                   data={'file':file_content})
 
         self.assertTrue(Capture.objects.filter(link_id=self.link.pk, role='primary').exclude(pk=old_primary_capture.pk).exists())
+        self.assertTrue(Capture.objects.filter(link_id=self.link.pk, role='provenance_summary').exists())
+
+        self.link.refresh_from_db()
+
+        self.assertTrue(self.link.wacz_size)
+        self.assertTrue(self.link.wacz_size != 1)
+
 
     def test_should_reject_patch_with_file_for_out_of_window_link(self):
         with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.pdf'), 'rb') as test_file:
@@ -157,6 +231,7 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
                                 expected_status_code=400)
         self.successful_get(self.link_url, user=self.org_user)
 
+    @pytest.mark.uses_storage
     def test_should_reject_patch_with_capture_in_progress(self):
         with open(os.path.join(TEST_ASSETS_DIR, 'target_capture_files', 'test.pdf'), 'rb') as test_file:
             data=test_file.read()
@@ -275,10 +350,11 @@ class LinkAuthorizationTestCase(LinkAuthorizationMixin, ApiResourceTestCase):
         self.successful_delete(self.in_progress_link_url, user=self.registrar_user)
 
 
-class LinkAuthorizationTransationTestCase(LinkAuthorizationMixin, ApiResourceTransactionTestCase):
+@pytest.mark.uses_storage
+class LinkAuthorizationTransactionTestCase(LinkAuthorizationMixin, ApiResourceTransactionTestCase):
 
     def setUp(self):
-        super(LinkAuthorizationTransationTestCase, self).setUp()
+        super(LinkAuthorizationTransactionTestCase, self).setUp()
         self.post_data = {'url': self.server_url + "/test.html",
                           'title': 'This is a test page'}
 

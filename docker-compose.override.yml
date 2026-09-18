@@ -1,0 +1,107 @@
+# overrides for local development, not used in CI
+services:
+  web:
+    build:
+      context: .
+      dockerfile: perma_web/Dockerfile
+      x-bake:
+        tags:
+          - registry.lil.tools/harvardlil/perma-web:144-51d2441d655dffd7f28c12c6deae6a44
+        platforms:
+          - linux/amd64
+          - linux/arm64
+      x-hash-paths:
+        - perma_web/pyproject.toml
+        - perma_web/uv.lock
+        - perma_web/npm-shrinkwrap.json
+        - perma_web/package.json
+        - perma_web/lil-archive-keyring.gpg
+
+  wacz-exhibitor:
+    build:
+      context: ./services/docker/wacz-exhibitor
+      args:
+        RELEASE: v0.2.18
+      x-bake:
+        tags:
+          - registry.lil.tools/harvardlil/wacz-exhibitor:6-ec122b8e74374fd90ad71189cbd42b62
+        platforms:
+          - linux/amd64
+          - linux/arm64
+      x-hash-paths:
+        - ./nginx.conf
+
+  #
+  # Scoop REST API
+  #
+  scoop-redis:
+    image: registry.lil.tools/library/redis:7.0
+    volumes:
+      - scoop_redis_data:/data:delegated
+    networks:
+      - scoop_rest_api_internal
+
+  scoop-db:
+    image: registry.lil.tools/library/postgres:16.3
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: scoop_api
+      POSTGRES_USER: scoop
+    volumes:
+      - scoop_postgres_data:/var/lib/postgresql/data:delegated
+    networks:
+      - scoop_rest_api_internal
+
+  scoop-rest-api:
+    image: registry.lil.tools/harvardlil/scoop-rest-api:149-4549304a548ed1501543c9dfcaa88b82
+    init: true
+    tty: true
+    depends_on:
+      - scoop-db
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      - API_DOMAIN=http://scoop-rest-api:5000
+      - DATABASE_USERNAME=scoop
+      - DATABASE_PASSWORD=password
+      - DATABASE_HOST=scoop-db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=scoop_api
+      - START_CRON=true                   # false|true
+      - START_FLASK_SERVER=true           # false|true
+      - START_CELERY=true                 # false|true
+      - DISPLAY=:99                       # Run Xvfb with the below virtual display number
+      - CREATE_ACCESS_KEY_WITH_LABEL=dev  # create a new access key each time the container starts
+    volumes:
+      - scoop_access_key:/app/docker/access_keys:delegated
+      - ./services/docker/scoop-rest-api/config.py:/app/scoop_rest_api/config.py
+    networks:
+      - scoop_rest_api
+      - scoop_rest_api_internal
+
+  #
+  # Superset
+  #
+
+  superset:
+    build:
+      context: ./services/docker/superset
+      dockerfile: Dockerfile
+    environment:
+      - ADMIN_USERNAME=admin
+      - ADMIN_EMAIL=admin@superset.com
+      - ADMIN_PASSWORD=admin
+      - DATABASE_NAME=perma-db
+      - SQLALCHEMY_URI=postgresql+psycopg2://perma:password@db:5432/perma
+    ports:
+      - "127.0.0.1:8088:8088"
+    depends_on:
+      - db
+    networks:
+      - superset
+    volumes:
+      - superset_data:/app/superset_home
+      - ./services/docker/superset/superset-init.sh:/superset-init.sh
+      - ./services/docker/superset/superset_config.py:/app/superset_config.py
+      - ./services/docker/superset/dashboard_export.zip:/app/dashboard_export.zip
+    entrypoint: ["/bin/bash", "/superset-init.sh"]

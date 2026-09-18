@@ -19,10 +19,20 @@ SUBDOMAIN_URLCONFS = {}
 
 DEBUG = False
 TESTING = True
+VIEW_SCHEMA = False
 
 ADMINS = (
     ("Admin's Name", 'admin@example.com'),
 )
+
+STORAGES["default"]["OPTIONS"]["bucket_name"] += '-test'
+STORAGES["secondary"]["OPTIONS"]["bucket_name"] += '-test'
+
+# Ensure unique bucket names for xdist workers
+_xdist_worker = os.environ.get('PYTEST_XDIST_WORKER')
+if _xdist_worker:
+    STORAGES["default"]["OPTIONS"]["bucket_name"] += f'-{_xdist_worker}'
+    STORAGES["secondary"]["OPTIONS"]["bucket_name"] += f'-{_xdist_worker}'
 
 
 ###############
@@ -36,25 +46,22 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = 'memory://localhost/'
 
+# Use faster (but weaker) password hasher when testing
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.MD5PasswordHasher",  # Faster than PBKDF2 for setting passwords
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",  # Fallback for fixture verification
+]
+
+# Exclude middleware that isn't needed for testing
+MIDDLEWARE_EXCLUDED = [
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'ratelimit.middleware.RatelimitMiddleware',
+    'api.middleware.CORSMiddleware',
+]
+MIDDLEWARE = [key for key in MIDDLEWARE if key not in MIDDLEWARE_EXCLUDED]
+
 # faster collectstatic
-STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
-
-# Note: this is recommended by the Django docs but
-# currently conflicts with some of our tests
-# PASSWORD_HASHERS = (
-#     'django.contrib.auth.hashers.MD5PasswordHasher',
-# )
-
-# Using the Django SQLite in-memory DB for testing is faster,
-# but threaded tasks won't have access in Django <=1.7
-# - https://docs.djangoproject.com/en/dev/ref/settings/#std:setting-TEST_NAME
-# - https://code.djangoproject.com/ticket/12118
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': None
-#     }
-# }
+STORAGES["staticfiles"]["BACKEND"] = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
 # Work around for https://github.com/jamesls/fakeredis/issues/234
 DJANGO_REDIS_CONNECTION_FACTORY = 'perma.tests.utils.FakeConnectionFactory'
@@ -80,15 +87,6 @@ PERMA_PAYMENTS_ENCRYPTION_KEYS = {
     'perma_public_key': 'ZmkWU6AdQlNrDCLNI154HSGH96jjs21UA3K+YpqezWg=',
     'perma_payments_public_key': 'DG8o9cS5Lgeuu7XAF08sw0aOX7mJFu9TVEtdrrBQHDY=',
 }
-
-PURCHASE_URL = '/purchase/'
-PURCHASE_HISTORY_URL = '/purchase-history/'
-ACKNOWLEDGE_PURCHASE_URL = '/acknowledge-purchase/'
-SUBSCRIBE_URL = '/subscribe/'
-CANCEL_URL = '/cancel-request/'
-SUBSCRIPTION_STATUS_URL = '/subscription/'
-UPDATE_URL = '/update/'
-CHANGE_URL = '/change/'
 
 
 # lots of subscription packages, to be thorough
@@ -141,8 +139,13 @@ TIERS = {
     ]
 }
 
-REMOTE_SELENIUM_HOST = 'selenium'
-PLAYBACK_HOST = 'perma-archives.test:81'
-
-ENABLE_SPONSORED_USERS = True
-ENABLE_BONUS_LINKS = True
+# Keep these lines last:
+#
+# Because in testing, pytest is pointed directly at this file,
+# [tool.pytest.ini_options]
+# DJANGO_SETTINGS_MODULE = "perma.settings.deployments.settings_testing",
+# settings/__init__.py is not loaded, so post_process_settings never runs.
+#
+# Call it directly here instead.
+from ..utils.post_processing import post_process_settings
+post_process_settings(globals())

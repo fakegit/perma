@@ -14,15 +14,94 @@ import json
 from io import StringIO
 from warcio.indexer import Indexer
 
-from django.test.utils import override_settings
 from django.conf import settings
 from django.test import LiveServerTestCase, TransactionTestCase, TestCase, SimpleTestCase
 from django.utils.functional import cached_property
 from rest_framework.test import APIClient
 
-import perma.tasks
+import perma.celery_tasks
 
 TEST_ASSETS_DIR = os.path.join(settings.PROJECT_ROOT, "perma/tests/assets")
+
+
+class MockResponse:
+    def __init__(self, json_data, status_code):
+        self.json_data = json_data
+        self.status_code = status_code
+
+    def json(self):
+        return self.json_data
+
+def raise_on_call(func, call_count, exc=Exception):
+    """
+    Raise an exception, after a function is called a certain number of times.
+
+    Example:
+
+    >>> def f(): pass
+    >>> bomb = raise_on_call(f, 3, ValueError('I exploded'))
+    >>> bomb()
+    >>> bomb()
+    >>> with assert_raises(ValueError):
+    ...     bomb()
+    >>> bomb()
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        if wrapper.calls == call_count:
+            raise exc
+        return func(*args, **kwargs)
+    wrapper.calls = 0
+    return wrapper
+
+
+def raise_after_call(func, call_count, exc=Exception):
+    """
+    Raise an exception, after a function is called a certain number of times,
+    and continue raising it on subsequent calls.
+
+    Example:
+
+    >>> def f(): pass
+    >>> bomb = raise_after_call(f, 3, ValueError('I exploded'))
+    >>> bomb()
+    >>> bomb()
+    >>> with assert_raises(ValueError):
+    ...     bomb()
+    >>> with assert_raises(ValueError):
+    ...     bomb()
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        if wrapper.calls >= call_count:
+            raise exc
+        return func(*args, **kwargs)
+    wrapper.calls = 0
+    return wrapper
+
+
+def return_on_call(func, call_count, val=None):
+    """
+    Return a particular response, after a function is called a certain number of times.
+
+    Example:
+
+    >>> def f(): pass
+    >>> bomb = return_on_call(f, 3, 'I exploded')
+    >>> bomb()
+    >>> bomb()
+    >>> assert bomb() == "I exploded"
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        if wrapper.calls >= call_count:
+            return val
+        return func(*args, **kwargs)
+    wrapper.calls = 0
+    return wrapper
 
 
 def copy_file_or_dir(src, dst):
@@ -39,6 +118,9 @@ def copy_file_or_dir(src, dst):
 
 
 def index_warc_file(warc_file):
+    # Note: warcio will NOT locate the HTTP headers of WARC response records
+    # who use the file:/// protocol.... which is to say, Scoop attachments
+    # https://github.com/webrecorder/warcio/blob/aa702cb321621b233c6e5d2a4780151282a778be/warcio/recordloader.py#L183-L185
     index_file = StringIO()
     indexer = Indexer("warc-target-uri,content-type,http:content-type,http:status", warc_file, index_file)
     indexer.process_one(warc_file, index_file, '')
@@ -71,12 +153,21 @@ class TestHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header(header, value)
         return SimpleHTTPRequestHandler.end_headers(self)
 
+    def parse_request(self):
+        super().parse_request()
+        # SimpleHTTPRequestHandler can only handle relative paths,
+        # but under some circumstances, requests can arrive here
+        # with full URLs.
+        if self.path.startswith("http://"):
+            self.path = urllib.parse.urlparse(self.path).path
+        return True
+
 
 def log_api_call(func):
     """
         Handy wrapper to log all API calls during tests. To enable, use:
 
-         LOG_API_CALLS=1 fab test
+         LOG_API_CALLS=1 invoke test
     """
     if not os.environ.get('LOG_API_CALLS'):
         return func
@@ -98,22 +189,21 @@ class LoggingAPIClient(APIClient):
     """
     @log_api_call
     def get(self, *args, **kwargs):
-        return super(LoggingAPIClient, self).get(*args, **kwargs)
+        return super(LoggingAPIClient, self).get(*args, **kwargs, secure=True)
     @log_api_call
     def post(self, *args, **kwargs):
-        return super(LoggingAPIClient, self).post(*args, **kwargs)
+        return super(LoggingAPIClient, self).post(*args, **kwargs, secure=True)
     @log_api_call
     def put(self, *args, **kwargs):
-        return super(LoggingAPIClient, self).put(*args, **kwargs)
+        return super(LoggingAPIClient, self).put(*args, **kwargs, secure=True)
     @log_api_call
     def patch(self, *args, **kwargs):
-        return super(LoggingAPIClient, self).patch(*args, **kwargs)
+        return super(LoggingAPIClient, self).patch(*args, **kwargs, secure=True)
     @log_api_call
     def delete(self, *args, **kwargs):
-        return super(LoggingAPIClient, self).delete(*args, **kwargs)
+        return super(LoggingAPIClient, self).delete(*args, **kwargs, secure=True)
 
 
-@override_settings(BANNED_IP_RANGES=[])
 class ApiResourceTestCaseMixin(SimpleTestCase):
 
     # TODO: Using the regular ROOT_URLCONF avoids a problem where failing tests print useless error messages,
@@ -123,7 +213,7 @@ class ApiResourceTestCaseMixin(SimpleTestCase):
     rejected_status_code = 401  # Unauthorized
 
     # reduce wait times for testing
-    perma.tasks.ROBOTS_TXT_TIMEOUT = perma.tasks.AFTER_LOAD_TIMEOUT = 1
+    perma.celery_tasks.ROBOTS_TXT_TIMEOUT = perma.celery_tasks.AFTER_LOAD_TIMEOUT = 1
 
     def setUp(self):
         super(ApiResourceTestCaseMixin, self).setUp()
@@ -405,7 +495,7 @@ class ApiResourceTransactionTestCase(ApiResourceTestCaseMixin, TransactionTestCa
         # start server
         for i in range(100):
             try:
-                cls._httpd = TestHTTPServer(('', cls.server_port), TestHTTPRequestHandler)
+                cls._httpd = TestHTTPServer(('0.0.0.0', cls.server_port), TestHTTPRequestHandler)
                 break
             except socket.error:
                 cls.server_port += 1

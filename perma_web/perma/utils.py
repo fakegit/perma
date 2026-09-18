@@ -1,76 +1,71 @@
-from contextlib import contextmanager
 from collections import OrderedDict
+from contextlib import contextmanager, redirect_stdout
+import csv
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-from functools import wraps, reduce
+from datetime import timezone as tz
+from functools import reduce, wraps
 import hashlib
-from hanzo import warctools
+import io
 import itertools
 import json
 import logging
-from nacl import encoding
-from nacl.public import Box, PrivateKey, PublicKey
-from netaddr import IPAddress, IPNetwork
 import operator
 import os
-import requests
-import ssl
-import socket
+import shutil
 import string
-import surt
-import tempdir
 import tempfile
-from ua_parser import user_agent_parser
+from typing import Literal, TypeVar
+import uuid
 import unicodedata
-from urllib.parse import urlparse
-from urllib3 import poolmanager
-from warcio.warcwriter import BufferWARCWriter
+import waffle
 from wsgiref.util import FileWrapper
+import zipfile
 
-from django.core.paginator import Paginator, EmptyPage
-from django.db.models import Q
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
-from django.core.exceptions import PermissionDenied, ValidationError
-from django.urls import reverse
-from django.core.serializers.json import DjangoJSONEncoder
-from django.http import HttpResponseForbidden, Http404, StreamingHttpResponse, HttpResponse
-from django.utils.decorators import available_attrs
 from django.contrib.auth.decorators import login_required
-from django.core.files.storage import default_storage
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.files.storage import storages
+from django.core.paginator import EmptyPage, Page, Paginator
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Q
+from django.db.models.query import QuerySet
+from django.http import (
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseForbidden,
+    JsonResponse,
+    StreamingHttpResponse,
+)
+from django.template import loader
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
+from hanzo import warctools
+from nacl import encoding
+from nacl.public import Box, PrivateKey, PublicKey
+import requests
+import surt
+import tempdir
+from ua_parser import user_agent_parser
+from warcio.indexer import Indexer
+from warcio.warcwriter import BufferWARCWriter
 
-from .exceptions import InvalidTransmissionException, WebrecorderException
+from perma.exceptions import (
+    InvalidTransmissionException,
+    ScoopAPIException,
+    ScoopAPINetworkException,
+)
 
 logger = logging.getLogger(__name__)
 warn = logger.warn
 
+T = TypeVar('T')
 
-### requests helpers ###
 
-class Sec1TLSAdapter(requests.adapters.HTTPAdapter):
-    """
-    Debian Buster and its version of OpenSSL evidently set a minimum TLS version of 1.2,
-    and there's a problem that results in SSL: DH_KEY_TOO_SMALL errors, for some websites.
-    Lower the security standard for our requests, per https://github.com/psf/requests/issues/4775
-    """
-
-    def init_poolmanager(self, connections, maxsize, block=False):
-        """Create and initialize the urllib3 PoolManager."""
-        ctx = ssl.create_default_context()
-        ctx.set_ciphers('DEFAULT@SECLEVEL=1')
-
-        # for whatever reason, required for verify=False
-        ctx.check_hostname = False
-        self.poolmanager = poolmanager.PoolManager(
-                num_pools=connections,
-                maxsize=maxsize,
-                block=block,
-                ssl_version=ssl.PROTOCOL_TLS,
-                ssl_context=ctx)
-
-    def cert_verify(self, conn, url, verify, cert):
-        super().cert_verify(conn, url, False, cert)
+def protocol():
+    return "https://" if settings.SECURE_SSL_REDIRECT else "http://"
 
 
 ### login helpers ###
@@ -84,7 +79,7 @@ def user_passes_test_or_403(test_func):
     """
     def decorator(view_func):
         @login_required()
-        @wraps(view_func, assigned=available_attrs(view_func))
+        @wraps(view_func)
         def _wrapped_view(request, *args, **kwargs):
             if not test_func(request.user):
                 raise PermissionDenied
@@ -129,13 +124,17 @@ class AlphaNumericValidator:
 
 ### list view helpers ###
 
-def apply_search_query(request, queryset, fields):
+def apply_search_query(
+    request: HttpRequest, queryset: QuerySet[T], fields: list[str]
+) -> tuple[QuerySet[T], str]:
     """
-        For the given `queryset`,
-        apply consecutive .filter()s such that each word
-        in request.GET['q'] appears in one of the `fields`.
+    For the given `queryset`,
+    apply consecutive .filter()s such that each word
+    in parameter 'q' appears in one of the `fields`.
     """
-    search_string = request.GET.get('q', '')
+    # Support either GET or POST request params
+    params = getattr(request, request.method)
+    search_string = params.get('q', '')
     if not search_string:
         return queryset, ''
 
@@ -152,25 +151,37 @@ def apply_search_query(request, queryset, fields):
 
     return queryset, search_string
 
-def apply_sort_order(request, queryset, valid_sorts, default_sort=None):
+def apply_sort_order(
+    request: HttpRequest,
+    queryset: QuerySet[T],
+    valid_sorts: list[str],
+    default_sort: str | None = None,
+) -> tuple[QuerySet[T], str]:
     """
         For the given `queryset`,
         apply sort order based on request.GET['sort'].
     """
     if not default_sort:
         default_sort = valid_sorts[0]
-    sort = request.GET.get('sort', default_sort)
+
+    # Support either GET or POST request params
+    params = getattr(request, request.method)
+
+    sort = params.get('sort', default_sort)
     if sort not in valid_sorts:
         sort = default_sort
     return queryset.order_by(sort), sort
 
-def apply_pagination(request, queryset):
+def apply_pagination(request: HttpRequest, queryset: QuerySet[T]) -> Page:
     """
         For the given `queryset`,
         apply pagination based on request.GET['page'].
     """
+    # Support either GET or POST request params
+    params = getattr(request, request.method)
+
     try:
-        page = max(int(request.GET.get('page', 1)), 1)
+        page = max(int(params.get('page', 1)), 1)
     except ValueError:
         page = 1
     paginator = Paginator(queryset, settings.MAX_USER_LIST_SIZE)
@@ -178,6 +189,31 @@ def apply_pagination(request, queryset):
         return paginator.page(page)
     except EmptyPage:
         return paginator.page(1)
+
+
+def export_queryset(
+    queryset: QuerySet[T],
+    export_format: Literal['csv', 'json'],
+    field_names: list[str],
+    filename: str = 'export',
+) -> HttpResponse | JsonResponse:
+    """Export a queryset as a CSV or JSON response."""
+    match export_format:
+        case 'csv':
+            response = HttpResponse(
+                content_type='text/csv',
+                headers={'Content-Disposition': f'attachment; filename="{filename}.csv"'},
+            )
+            writer = csv.DictWriter(response, fieldnames=field_names)
+            writer.writeheader()
+            for record in queryset:
+                writer.writerow(record)
+        case 'json':
+            response = JsonResponse(list(queryset), safe=False)
+        case _:
+            raise ValueError('export_format must be one of: csv, json')
+    return response
+
 
 ### form view helpers ###
 
@@ -249,25 +285,6 @@ def ratelimit_ip_key(group, request):
 
 ### security ###
 
-def ip_in_allowed_ip_range(ip):
-    """ Return False if ip is blocked. """
-    if not ip:
-        return False
-    ip = IPAddress(ip)
-    for banned_ip_range in settings.BANNED_IP_RANGES:
-        if IPAddress(ip) in IPNetwork(banned_ip_range):
-            return False
-    return True
-
-def url_in_allowed_ip_range(url):
-    """ Return False if url resolves to a blocked IP. """
-    hostname = urlparse(url).netloc.split(':')[0]
-    try:
-        ip = socket.gethostbyname(hostname)
-    except socket.gaierror:
-        return False
-    return ip_in_allowed_ip_range(ip)
-
 def get_client_ip(request):
     return request.META[settings.CLIENT_IP_HEADER]
 
@@ -276,46 +293,24 @@ def get_client_ip(request):
 def tz_datetime(*args, **kwargs):
     return timezone.make_aware(datetime(*args, **kwargs))
 
-
 def first_day_of_next_month(now):
     # use first of month instead of today to avoid issues w/ variable length months
     first_of_month = now.replace(day=1)
     return first_of_month + relativedelta(months=1)
 
+def today_next_month(now):
+    # relativedelta handles leap years: 2/29 -> 2/28
+    return now + relativedelta(months=1)
 
 def today_next_year(now):
     # relativedelta handles leap years: 2/29 -> 2/28
     return now + relativedelta(years=1)
 
+def years_ago_today(now, years_ago):
+    # pass in how many years ago from now
+    return now - relativedelta(years=years_ago)
 
 ### addresses ###
-
-def get_lat_long(address):
-    r = None
-    try:
-        r = requests.get('https://maps.googleapis.com/maps/api/geocode/json', {'address': address, 'key':settings.GEOCODING_KEY})
-    except Exception as e:
-        warn(f"Error connecting to geocoding API: {e}")
-    if r and r.status_code == 200:
-        rj = r.json()
-        status = rj['status']
-        if status == 'OK':
-            results = rj['results']
-            if len(results) == 1:
-                (lat, lng) = (results[0]['geometry']['location']['lat'], results[0]['geometry']['location']['lng'])
-                return (lat, lng)
-            else:
-                warn("Multiple locations returned for address.")
-        elif status == 'ZERO_RESULTS':
-            warn("No location returned for address.")
-        elif status == 'REQUEST_DENIED':
-            warn("Geocoding API request denied.")
-        elif status == 'OVER_QUERY_LIMIT':
-            warn("Geocoding API request over query limit.")
-        else:
-            warn(f"Unknown response from geocoding API: {status}")
-    else:
-        warn(f"Error connecting to geocoding API: {r.status_code}")
 
 
 def parse_user_agent(user_agent_str):
@@ -323,13 +318,6 @@ def parse_user_agent(user_agent_str):
     # {'brand': None, 'model': None, 'family': 'Other'}
     return user_agent_parser.ParseUserAgent(user_agent_str)
 
-def user_agent_for_domain(target_domain):
-    capture_user_agent = settings.CAPTURE_USER_AGENT
-    if any(domain in target_domain for domain in settings.DOMAINS_REQUIRING_UNIQUE_USER_AGENT):
-        capture_user_agent = capture_user_agent + f" {settings.PERMA_USER_AGENT_SUFFIX}"
-    if any(domain in target_domain for domain in settings.DOMAINS_REQUIRING_BOT_USER_AGENT):
-        capture_user_agent = capture_user_agent + f" {settings.PERMABOT_USER_AGENT_SUFFIX}"
-    return capture_user_agent
 
 ### pdf handling on mobile ###
 
@@ -340,12 +328,6 @@ def redirect_to_download(capture_mime_type, user_agent_str):
 
     return parsed_agent["family"] and capture_mime_type and \
            "Mobile" in parsed_agent["family"] and "pdf" in capture_mime_type
-
-
-### playback
-
-def protocol():
-    return "https://" if settings.SECURE_SSL_REDIRECT else "http://"
 
 ### memento
 
@@ -409,6 +391,10 @@ def memento_data_for_url(request, url, qs=None, hash=None):
 def remove_control_characters(s):
     return "".join(ch for ch in s if unicodedata.category(ch)[0]!="C")
 
+def remove_whitespace(s):
+    return ''.join(s.split())
+
+
 ### perma payments
 
 # communication
@@ -448,7 +434,7 @@ def process_perma_payments_transmission(transmitted_data, fields):
 
 def pp_date_from_post(posted_value):
     if posted_value:
-        return datetime.strptime(posted_value, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+        return datetime.strptime(posted_value, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=tz.utc)
     return None
 
 
@@ -521,26 +507,215 @@ def decrypt_from_perma_payments(ciphertext, encoder=encoding.Base64Encoder):
     return box.decrypt(ciphertext, encoder=encoder)
 
 #
-# warc writing
+# wacz writing
 #
 
-@contextmanager
-def preserve_perma_warc(guid, timestamp, destination, warc_size):
+def now():
+    """Returns the current time"""
+    return tuple(datetime.utcnow().timetuple()[:6])
+
+
+def parse_warc(warc_file, warc_url):
+    """ Gets length, digest, and offset for uploaded file as well as provenance file """
+    targets = [warc_url, "file:///provenance-summary.html"]
+    response = {target: {key: None for key in ["length", "digest", "offset"]} for target in targets}
+    f = io.StringIO()
+    with redirect_stdout(f):
+        indexer = Indexer(fields=["offset", "length", "warc-target-uri", "warc-block-digest"], inputs=[warc_file], output='-')
+        indexer.process_all()
+    out = f.getvalue()
+    index = [json.loads(o) for o in out.split("\n") if o]
+    for entry in index:
+        if "warc-target-uri" in entry:
+            for target in targets:
+                if entry["warc-target-uri"] == target:
+                    response[target]["length"] = entry["length"]
+                    response[target]["offset"] = entry["offset"]
+                    response[target]["digest"] = entry["warc-block-digest"]
+    return response
+
+
+def sha256(input_file, buf_size=65536):
+    """ Returns the SHA256 hexdigest of a file """
+    sha256 = hashlib.sha256()
+    with open(input_file, 'rb') as f:
+        while True:
+            data = f.read(buf_size)
+            if not data:
+                break
+            sha256.update(data)
+    return sha256.hexdigest()
+
+
+def preserve_perma_wacz(uploaded_file, warc_url, mime_type, guid, url, title, creation_timestamp, wacz_destination):
     """
-    Context manager for opening a perma warc, ready to receive warc records.
-    Safely closes and saves the file to storage when context is exited.
+    Creates and writes a perma WACZ for a user upload, returning the WACZ size.
+    This necessarily creates a WARC, but we no longer save it.
     """
-    # mode set to 'ab+' as a workaround for https://bugs.python.org/issue25341
-    out = tempfile.TemporaryFile('ab+')
-    write_perma_warc_header(out, guid, timestamp)
-    try:
-        yield out
-    finally:
-        out.flush()
-        warc_size.append(out.tell())
-        out.seek(0)
-        default_storage.store_file(out, destination, overwrite=True)
-        out.close()
+    timestamp = datetime.utcnow()
+    ts_string = timestamp.isoformat() + "Z"
+    # Link's creation_timestamp has "+00:00" at the end, so
+    creation_ts_string = creation_timestamp.isoformat().partition("+")[0] + "Z"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # prepare WARC...
+        warc_file = f"{tmpdir}/data.warc.gz"
+        warc = open(warc_file, 'ab+')
+        write_perma_warc_header(warc, guid, timestamp)
+
+        uploaded_file.file.seek(0)
+        write_resource_record_from_asset(uploaded_file.file.read(), warc_url, mime_type, ts_string, warc)
+
+        # create provenance summary and add it to the WARC
+        provenance = loader.get_template("provenance-summary.html")
+        context = {
+            "url": url,
+            "now": ts_string,
+            "mime_type": mime_type,
+            "creation_timestamp": creation_ts_string
+        }
+        write_resource_record_from_asset(
+            provenance.render(context).encode(),
+            "file:///provenance-summary.html",
+            "text/html",
+            ts_string,
+            warc
+        )
+        warc.close()
+
+        # ...set up pages.jsonl...
+        pages = [
+            {"format": "json-pages-1.0", "id": "pages", "title": "All Pages"},
+            {
+                "id": f"{uuid.uuid4()}",
+                "url": warc_url,
+                "title": f"User-uploaded file replacing failed capture of {url}",
+                "ts": ts_string
+            },
+            {
+                "id": f"{uuid.uuid4()}",
+                "url": "file:///provenance-summary.html",
+                "title": "Provenance Summary",
+                "ts": ts_string
+            }
+        ]
+        pages_bytes = "\n".join([json.dumps(page) for page in pages]).encode("utf-8")
+
+        # ...CDXJ index...
+        targets = ["file:///provenance-summary.html", warc_url]
+        selected_warc_headers = parse_warc(warc_file, warc_url)
+        cdxj = {
+            target: json.dumps({
+                "url": target,
+                "mime": "text/html" if target.endswith(".html") else mime_type,
+                "status": 200,
+                "digest": selected_warc_headers[target]["digest"],
+                "length": selected_warc_headers[target]["length"],
+                "offset": selected_warc_headers[target]["offset"],
+                "filename":"data.warc.gz"
+            }).replace(" ", "") for target in targets
+        }
+        ts = timestamp.strftime("%Y%m%d%H%M%S")
+        index = "\n".join(
+            [
+                f"{target} {ts} {cdxj[target]}"
+                for target in targets
+            ]
+        )
+
+        # ...datapackage...
+        datapackage = {
+            "profile": "data-package",
+            "wacz_version": "1.1.1",
+            "title": title,
+            "description": f"User upload for {url}",
+            "mainPageURL": warc_url,
+            "created": ts_string,
+            "software": f"Perma.cc {settings.PERMA_VERSION}",
+            "resources": [
+                {
+                    "name": "pages.jsonl",
+                    "path": "pages/pages.jsonl",
+                    "hash": "sha256:" + hashlib.sha256(pages_bytes).hexdigest(),
+                    "bytes": len(pages_bytes)
+                },
+                {
+                    "name": "index.cdx",
+                    "path": "indexes/index.cdx",
+                    "hash": "sha256:" + hashlib.sha256(index.encode()).hexdigest(),
+                    "bytes": len(index)
+                },
+                {
+                    "name": "data.warc.gz",
+                    "path": "archive/data.warc.gz",
+                    "hash": "sha256:" + sha256(warc_file),
+                    "bytes": os.stat(warc_file).st_size
+                }
+            ],
+        }
+        # ...and datapackage digest
+        datapackage_digest = {
+            "path": "datapackage.json",
+            "hash": hashlib.sha256(json.dumps(datapackage).encode()).hexdigest()
+        }
+
+        # Now we can create the WACZ file...
+        wacz_file = f"{tmpdir}/{guid}.wacz"
+        wacz = zipfile.ZipFile(wacz_file, "w")
+
+        # add index
+        index_file = zipfile.ZipInfo("indexes/index.cdx", now())
+        index_file.compress_type = zipfile.ZIP_DEFLATED
+        wacz.writestr(index_file, index.encode("utf-8"))
+
+        # add pages.jsonl
+        pages_file = zipfile.ZipInfo("pages/pages.jsonl", now())
+        pages_file.compress_type = zipfile.ZIP_DEFLATED
+        wacz.writestr(pages_file, pages_bytes)
+
+        # add WARC file
+        archive_file = zipfile.ZipInfo.from_file(
+            warc_file, "archive/data.warc.gz"
+        )
+        with wacz.open(archive_file, "w") as out_fh:
+            with open(warc_file, "rb") as in_fh:
+                shutil.copyfileobj(in_fh, out_fh)
+
+        # add datapackage
+        datapackage_file = zipfile.ZipInfo("datapackage.json", now())
+        datapackage_file.compress_type = zipfile.ZIP_DEFLATED
+        wacz.writestr(
+            datapackage_file,
+            json.dumps(datapackage).encode("utf-8")
+        )
+
+        # and datapackage digest
+        datapackage_digest_file = zipfile.ZipInfo(
+            "datapackage-digest.json", now()
+        )
+        datapackage_digest_file.compress_type = zipfile.ZIP_DEFLATED
+        wacz.writestr(
+            datapackage_digest_file,
+            json.dumps(datapackage_digest).encode("utf-8")
+        )
+
+        # and close the file
+        wacz.close()
+
+        # now store it
+        with open(wacz_file, "rb") as f:
+            storages[settings.WACZ_STORAGE].store_file(f, wacz_destination, overwrite=True)
+
+        wacz_size = os.stat(wacz_file).st_size
+
+        # (no need to clean up, because the context manager will do it)
+
+    # ...and return the size
+    return wacz_size
+
+#
+# warc writing
+#
 
 def write_perma_warc_header(out_file, guid, timestamp):
     # build warcinfo header
@@ -551,7 +726,7 @@ def write_perma_warc_header(out_file, guid, timestamp):
     ]
     warcinfo_fields = [
         b'operator: Perma.cc',
-        b'format: WARC File Format 1.0',
+        b'format: WARC file version 1.0',
         bytes(f'Perma-GUID: {guid}', 'utf-8')
     ]
     data = b'\r\n'.join(warcinfo_fields) + b'\r\n'
@@ -576,7 +751,7 @@ def make_detailed_warcinfo(filename, guid, coll_title, coll_desc, rec_title, pag
     writer = BufferWARCWriter(gzip=True)
     params = OrderedDict([('operator', 'Perma.cc download'),
                           ('Perma-GUID', guid),
-                          ('format', 'WARC File Format 1.0'),
+                          ('format', 'WARC file version 1.0'),
                           ('json-metadata', json.dumps(coll_metadata))])
 
     record = writer.create_warcinfo_record(filename, params)
@@ -591,25 +766,17 @@ def make_detailed_warcinfo(filename, guid, coll_title, coll_desc, rec_title, pag
     return writer.get_contents()
 
 
-def write_warc_records_recorded_from_web(source_file_handle, out_file):
-    """
-    Copies a series of pre-recorded WARC Request/Response records to out_file
-    """
-    copy_file_data(source_file_handle, out_file)
-
-
-def write_resource_record_from_asset(data, url, content_type, out_file, extra_headers=None):
+def write_resource_record_from_asset(data, url, content_type, warc_date, out_file, extra_headers=None):
     """
     Constructs a single WARC resource record from an asset (screenshot, uploaded file, etc.)
     and writes to out_file.
     """
-    warc_date = warctools.warc.warc_datetime_str(timezone.now()).replace(b'+00:00Z', b'Z')
     headers = [
         (warctools.WarcRecord.TYPE, warctools.WarcRecord.RESOURCE),
         (warctools.WarcRecord.ID, warctools.WarcRecord.random_warc_uuid()),
-        (warctools.WarcRecord.DATE, warc_date),
+        (warctools.WarcRecord.DATE, bytes(warc_date, 'utf-8')),
         (warctools.WarcRecord.URL, bytes(url, 'utf-8')),
-        (warctools.WarcRecord.BLOCK_DIGEST, bytes(f'sha1:{hashlib.sha1(data).hexdigest()}', 'utf-8'))
+        (warctools.WarcRecord.BLOCK_DIGEST, bytes(f'sha256:{hashlib.sha256(data).hexdigest()}', 'utf-8'))
     ]
     if extra_headers:
         headers.extend(extra_headers)
@@ -634,99 +801,253 @@ def get_warc_stream(link, stream=True):
         }]
     )
 
-    warc_stream = FileWrapper(default_storage.open(link.warc_storage_file()))
-    warc_stream = itertools.chain([warcinfo], warc_stream)
-    if stream:
-        response = StreamingHttpResponse(warc_stream, content_type="application/gzip")
-    else:
-        response = HttpResponse(warc_stream, content_type="application/gzip")
-    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    with link.get_warc() as warc_file:
+        warc_stream = itertools.chain([warcinfo], FileWrapper(warc_file))
+        if stream:
+            response = StreamingHttpResponse(warc_stream, content_type="application/gzip")
+        else:
+            response = HttpResponse(warc_stream, content_type="application/gzip")
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
-    return response
+def get_wacz_stream(link, stream=True):
+    with link.get_wacz() as wacz_file:
+        wacz_stream = FileWrapper(wacz_file)
+        if stream:
+            response = StreamingHttpResponse(wacz_stream, content_type="application/wacz")
+        else:
+            response = HttpResponse(wacz_stream, content_type="application/wacz")
+        response['Content-Disposition'] = f'attachment; filename="{link.guid}.wacz"'
+        return response
 
-def stream_warc(link, stream=True):
+
+def stream_archive(link, stream=True, file_format='warc'):
     # `link.user_deleted` is checked here for dev convenience:
-    # it's easy to forget that deleted links/warcs aren't truly deleted,
-    # and easy to accidentally permit the downloading of "deleted" warcs.
-    # Users of stream_warc shouldn't have to worry about / remember this.
+    # it's easy to forget that deleted Perma Links' files aren't truly deleted,
+    # and easy to accidentally permit the downloading of "deleted" archive files.
+    # Users of stream_archive shouldn't have to worry about / remember this.
     if link.user_deleted or not link.can_play_back():
         raise Http404
-    return get_warc_stream(link, stream)
 
-def stream_warc_if_permissible(link, user, stream=True):
+    try:
+        match file_format:
+            case 'warc':
+                return get_warc_stream(link, stream)
+            case 'wacz':
+                return get_wacz_stream(link, stream)
+            case _:
+                raise NotImplementedError("Unsupported file format.")
+    except RuntimeError:
+        # If the requested format is not available, return 404
+        # just like with deleted and failed Perma Links
+        raise Http404
+
+
+def stream_archive_if_permissible(link, user, stream=True, file_format='warc'):
+    if not user.is_authenticated:
+        return HttpResponse('Unauthenticated.', status=401)
+
     if user.can_view(link):
-        return stream_warc(link, stream)
+        return stream_archive(link, stream, file_format)
     return HttpResponseForbidden('Private archive.')
 
 
-#
-# Webrecorder Helpers
-#
-
-def clear_wr_session(request, error_if_wr_user_not_found=False):
+def calculate_s3_etag(fp, chunk_size, multipart_format=False):
     """
-    Clear Webrecorder session info in Perma and in WR
+    Adapted from https://stackoverflow.com/a/43819225
     """
-    wr_temp_username = request.session.pop('wr_temp_username', '')
-    wr_private_session_cookie = request.session.pop('wr_private_session_cookie', '')
-    request.session.pop('wr_public_session_cookie', '')
-    request.session.save()
+    md5s = []
+    full_hash =  hashlib.md5()
 
-    if not wr_temp_username or not wr_private_session_cookie:
-        return
+    while True:
+        data = fp.read(chunk_size)
+        if not data:
+            break
+        md5s.append(hashlib.md5(data))
+        full_hash.update(data)
 
-    try:
-        response, _  = query_wr_api(
-            method='delete',
-            path=f'/user/{wr_temp_username}',
-            cookie=wr_private_session_cookie,
-            valid_if=lambda code, data: (code == 200) or (code == 404 and data.get('error') in ['not_found', 'no_such_user'])
-        )
-    except WebrecorderException:
-        # Record the exception, but don't halt execution: this should be non-fatal
-        logger.exception(f'Unexpected response from DELETE /user/{wr_temp_username}')
-        return
+    if multipart_format:
+        digests = b''.join(m.digest() for m in md5s)
+        digests_md5 = hashlib.md5(digests)
+        return '{}-{}'.format(digests_md5.hexdigest(), len(md5s))
 
-    if response.status_code == 404:
-        if error_if_wr_user_not_found:
-            log_level = logging.ERROR
-        else:
-            log_level = logging.INFO
-        logger.log(log_level, f'Attempt to delete {wr_temp_username} from WR failed: already expired?')
+    return full_hash.hexdigest()
 
+#
+# Internet Archive
+#
 
-def query_wr_api(method, path, cookie, valid_if, json=None, data=None):
-    # Make the request
-    try:
-        response = requests.request(
-            method,
-            settings.WR_API + path,
-            json=json,
-            data=data,
-            cookies={'__wr_sesh': cookie} if cookie else None,
-            timeout=10,
-            allow_redirects=False
-        )
-    except requests.exceptions.RequestException as e:
-        raise WebrecorderException() from e
+def get_ia_session():
+    import internetarchive
+    patch_internet_archive(internetarchive)
 
-    # Validate the response
-    try:
-        data = safe_get_response_json(response)
-        assert valid_if(response.status_code, data)
-    except AssertionError:
-        raise WebrecorderException(f"{response.status_code}: {str(data)}")
-
-    return response, data
+    config = {"s3": {"access": settings.INTERNET_ARCHIVE_ACCESS_KEY, "secret": settings.INTERNET_ARCHIVE_SECRET_KEY}}
+    return internetarchive.get_session(config=config, http_adapter_kwargs={"max_retries": 0})
 
 
-def get_wr_session_cookie(request, session_key):
-    cookie = request.session.get(session_key)
-    timestamp = request.session.get(session_key + '_timestamp')
-    if cookie and timestamp >= (datetime.utcnow() - timedelta(seconds=settings.WR_COOKIE_PERMITTED_AGE)).timestamp():
-        return cookie
-    return None
+def patch_internet_archive(ia_module):
+    """
+    Patch a custom method into the Internet Archive's `ArchiveSession`.
+    """
 
+    def get_s3_load_info(self, identifier=None, access_key=None, request_kwargs=None):
+        """
+        This is identical to the IA session's s3_is_overloaded method, except
+        it also returns the complete response, which is expected to be JSON of the form:
+            {
+                'bucket': '<identifier>'|None,
+                'detail': {
+                    'accesskey_ration': <int>,
+                    'accesskey_tasks_queued': <int>,
+                    'bucket_ration': <int>,
+                    'bucket_tasks_queued': <int>,
+                    'limit_reason': <str>,
+                    'rationing_engaged': <int>,
+                    'rationing_level': <int>,
+                    'total_global_limit': <int>,
+                    'total_tasks_queued': <int>
+                },
+                'over_limit': 0|1
+            }
+
+        https://github.com/jjjake/internetarchive/blob/8c13eb021bd3afb52d56b49151be24317f0cdca6/internetarchive/session.py#L325-L344
+        """
+        request_kwargs = request_kwargs or {}
+        if 'timeout' not in request_kwargs:
+            request_kwargs['timeout'] = 12
+
+        u = f'{self.protocol}//s3.us.archive.org'
+        p = {
+            'check_limit': 1,
+            'accesskey': access_key,
+            'bucket': identifier,
+        }
+        try:
+            r = self.get(u, params=p, **request_kwargs)
+        except Exception:
+            return (True, {})
+        try:
+            j = r.json()
+        except ValueError:
+            return (True, {})
+        # remove our access key, if present, from the response
+        try:
+            del j['accesskey']
+        except KeyError:
+            pass
+        return (j.get('over_limit') != 0, j)
+
+    ia_module.ArchiveSession.get_s3_load_info = get_s3_load_info
+
+
+def get_complete_ia_rate_limiting_info(include_buckets=True, include_max_buckets=100):
+    """
+    Return information on all known Internet Archive rate limits and their current status.
+    """
+    # import here to prevent circular references; lots of files import from utils.py
+    from perma.models import InternetArchiveItem  # noqa
+    import internetarchive  # noqa
+    patch_internet_archive(internetarchive)
+
+    ia_session = get_ia_session()
+
+    def get_task_info(cmd):
+        # Some available tasks are listed at https://archive.org/developers/tasks.html#supported-tasks,
+        # but information about others, such as modify_xml.php, is also exposed by this API.
+        #
+        # Uploads and deletes, handled by the S3-like API (https://archive.org/developers/ias3.html)
+        # are also subject to rate limiting, but their limits are described by a different API:
+        # see `get_s3_load_info`.
+        try:
+            data = ia_session.get_tasks_api_rate_limit(cmd=cmd)
+        except requests.exceptions.ConnectionError:
+            return None
+        return {
+            "tasks_limit": data["value"]["tasks_limit"],
+            "tasks_inflight": data["value"]["tasks_inflight"],
+            "tasks_blocked_by_offline": data["value"]["tasks_blocked_by_offline"]
+        }
+
+    def update_general_s3_info(output, s3_details):
+        output["general_s3"]["accesskey_ration"] = s3_details.get("detail", {}).get("accesskey_ration")
+        output["general_s3"]["accesskey_tasks_queued"] = s3_details.get("detail", {}).get("accesskey_tasks_queued")
+        output["general_s3"]["total_global_limit"] = s3_details.get("detail", {}).get('total_global_limit')
+        output["general_s3"]["total_tasks_queued"] = s3_details.get("detail", {}).get('total_tasks_queued')
+
+    def add_bucket_info(output, bucket, s3_details):
+        output["buckets"][bucket] = {
+            "bucket_ration": s3_details.get("detail", {}).get("bucket_ration"),
+            "bucket_tasks_queued": s3_details.get("detail", {}).get("bucket_tasks_queued")
+        }
+
+    def record_over_limit_details(output, s3_is_overloaded, s3_details):
+        # Until we understand better how these rate limits work and how information is
+        # communicated, keep a copy of the complete response whenever it looks like a
+        # rate limit has been exceeded or is approaching. May be empty: when the API
+        # is truly overloaded, it sometimes fails to return a response at all, in which
+        # case s3_is_overloaded is True and s3_details is {}.
+        if s3_is_overloaded or s3_details.get("detail", {}).get("rationing_engaged"):
+            output["over_limit_details"].append(s3_details)
+
+    output = {
+        "modify_xml": get_task_info('modify_xml.php'),
+        "derive": get_task_info('derive.php'),
+        "general_s3": {},
+        "buckets": {},
+        "over_limit_details": []
+    }
+
+    # check s3 accesskey and global limits first, without specifying a bucket
+    s3_is_overloaded, s3_details = ia_session.get_s3_load_info(access_key=settings.INTERNET_ARCHIVE_ACCESS_KEY)
+    update_general_s3_info(output, s3_details)
+    record_over_limit_details(output, s3_is_overloaded, s3_details)
+
+    # check for bucket-specific limits
+    if include_buckets:
+        buckets = InternetArchiveItem.objects.filter(tasks_in_progress__gt=0).values_list('identifier', flat=True).order_by('identifier')
+        if include_max_buckets:
+            buckets = buckets[:include_max_buckets]
+        for bucket in buckets:
+            s3_is_overloaded, s3_details = ia_session.get_s3_load_info(identifier=bucket, access_key=settings.INTERNET_ARCHIVE_ACCESS_KEY)
+            add_bucket_info(output, bucket, s3_details)
+            # each bucket-specific response will include updated general rate limit info
+            update_general_s3_info(output, s3_details)
+            record_over_limit_details(output, s3_is_overloaded, s3_details)
+
+    return output
+
+
+def ia_global_task_limit_approaching(s3_details):
+    if not s3_details:
+        # if the API is so hampered that it didn't return a response, assume it's too overloaded for us
+        return True
+    return s3_details['detail']['total_global_limit'] - s3_details['detail']['total_tasks_queued'] - settings.INTERNET_ARCHIVE_PERMITTED_PROXIMITY_TO_GLOBAL_RATE_LIMIT <= 0
+
+
+def ia_perma_task_limit_approaching(s3_details):
+    if not s3_details:
+        # if the API is so hampered that it didn't return a response, assume it's too overloaded for us
+        return True
+    return s3_details['detail']['accesskey_ration'] - s3_details['detail']['accesskey_tasks_queued'] - settings.INTERNET_ARCHIVE_PERMITTED_PROXIMITY_TO_RATE_LIMIT <= 0
+
+
+def ia_bucket_task_limit_approaching(s3_details):
+    if not s3_details:
+        # if the API is so hampered that it didn't return a response, assume it's too overloaded for us
+        return True
+    return s3_details['detail']['bucket_ration'] - s3_details['detail']['bucket_tasks_queued'] - settings.INTERNET_ARCHIVE_PERMITTED_PROXIMITY_TO_RATE_LIMIT <= 0
+
+
+def date_range(start_date, end_date, delta):
+    current = start_date
+    while current <= end_date:
+        yield current
+        current += delta
+
+
+#
+# Scoop Helpers
+#
 
 def safe_get_response_json(response):
     try:
@@ -735,45 +1056,44 @@ def safe_get_response_json(response):
         data = {}
     return data
 
+def send_to_scoop(method, path, valid_if, json=None, stream=False, timeout=10):
+    api_root = settings.SCOOP_API_URL
+    api_key = settings.SCOOP_API_KEY
 
-def set_options_headers(request, response, always_set_allowed_origin=False):
-    '''
-    Mutates response in-place.
-    '''
+    if waffle.switch_is_active('use_beta_capture_api'):
+        if settings.BETA_SCOOP_API_URL and settings.BETA_SCOOP_API_KEY:
+            api_root = settings.BETA_SCOOP_API_URL
+            api_key = settings.BETA_SCOOP_API_KEY
+        else:
+            logger.warning("The 'use_beta_capture_api' is on, but configuration is absent. Using standard API.")
 
-    origin = request.META.get('HTTP_ORIGIN')
-    origin_host = settings.PLAYBACK_HOST
-    target_host = settings.HOST
+    # Make the request
+    try:
+        response = requests.request(
+            method,
+            api_root + path,
+            json=json,
+            headers={
+                "Access-Key": api_key,
+                "User-Agent": settings.SCOOP_API_USERAGENT
+            },
+            timeout=timeout,
+            allow_redirects=False,
+            stream=stream
+        )
+    except requests.exceptions.RequestException as e:
+        raise ScoopAPINetworkException() from e
 
-    # always set access-control-allow-origin if requested
-    if always_set_allowed_origin and origin_host:
-        expected_origin = request.scheme + '://' + origin_host
-        response['Access-Control-Allow-Origin'] = expected_origin
-
-    # no origin, not using cors
-    if not origin:
-        return False
-
-    if origin_host:
-        expected_origin = request.scheme + '://' + origin_host
-
-        # ensure origin is the content host origin
-        if origin != expected_origin:
-            return False
-
-    host = request.META.get('HTTP_HOST')
-    # ensure host is the app host
-    if target_host and host != target_host:
-        return False
-
-    response['Access-Control-Allow-Origin'] = origin
-
-    methods = request.META.get('HTTP_ACCESS_CONTROL_REQUEST_METHOD')
-    if methods:
-        response['Access-Control-Allow-Methods'] = methods
-
-    headers = request.META.get('HTTP_ACCESS_CONTROL_REQUEST_HEADERS')
-    if headers:
-        response['Access-Control-Allow-Headers'] = headers
-
-    response['Access-Control-Allow-Credentials'] = 'true'
+    # Validate the response
+    try:
+        if stream:
+            data = {}
+        else:
+            data = safe_get_response_json(response)
+        assert valid_if(response.status_code, data)
+    except AssertionError:
+        if response.status_code in [403, 502]:
+            cleaned_content = response.content.replace(b'\n', b' ').strip()
+            logger.warning(f"Unexpected {response.status_code}: {response.headers}: {cleaned_content}.")
+        raise ScoopAPIException(f"{response.status_code}: {str(data)}")
+    return response, data

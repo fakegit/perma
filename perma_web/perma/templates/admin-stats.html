@@ -1,0 +1,450 @@
+{% extends "base-responsive.html" %}
+{% load render_bundle from webpack_loader %}
+{% block title %} | Admin Stats{% endblock %}
+
+{% block bodyFlags %}admin-stats{% endblock bodyFlags %}
+
+{% block mainContent %}
+  <div class="container cont-fixed stats-container">
+    <ul class="nav nav-tabs">
+      <li class="active"><a href="#celery_data" data-toggle="tab">Celery Queues</a></li>
+      <li><a href="#rate-limits-pane" data-toggle="tab">Internet Archive</a></li>
+      <li><a href="#capture-job-pane" data-toggle="tab">Capture Jobs</a></li>
+      <li><a href="#capture-error-pane" data-toggle="tab">Capture Errors</a></li>
+      <li><a href="#days-pane" data-toggle="tab">This Month's Links</a></li>
+      <li><a href="#random-pane" data-toggle="tab">Random</a></li>
+      <li><a href="#emails-pane" data-toggle="tab">Users by Domain</a></li>
+    </ul>
+    <div class="tab-content">
+
+      <div class="tab-pane active" id="celery_data">
+        <h3 class="body-ah">Celery queues</h3>
+        <button type="button" id="toggle-queues-auto-refresh">Start Auto-Refresh (every 2s)</button>
+        <br>
+        <hr>
+        <div id="celery_queues">Loading...</div>
+
+        <h3 class="body-ah">Celery task data</h3>
+        <button type="button" id="toggle-tasks-auto-refresh">Start Auto-Refresh (every 2s)</button>
+        <br>
+        <hr>
+        <div id="celery">Loading...</div>
+      </div>
+
+      <div class="tab-pane" id="rate-limits-pane">
+        <h3 class="body-ah">Internet Archive</h3>
+        <button type="button" id="refresh-rate-limits">Refresh</button>&nbsp;<button type="button" id="auto-refresh-rate-limits">Start Auto-Refresh (every 15s)</button><span id="rate-limits-status"></span>
+        <br><br>
+        <div id="rate_limits">Loading...</div>
+      </div>
+
+      <div class="tab-pane" id="capture-job-pane">
+        <h3 class="body-ah">Capture jobs</h3>
+        <button type="button" id="toggle-capture-jobs-auto-refresh">Start Auto-Refresh (every 2s)</button>
+        <br>
+        <hr>
+        <div id="job_queue">Loading...</div>
+      </div>
+
+      <div class="tab-pane" id="capture-error-pane">
+        <h3 class="body-ah">Capture errors</h3>
+        <button type="button" id="refresh-capture-errors">Refresh</button>&nbsp;<button type="button" id="auto-refresh-capture-errors">Start Auto-Refresh (every 15s)</button><span id="capture-errors-status"></span>
+        <br><br>
+        <div id="capture_errors">Loading...</div>
+      </div>
+
+
+      <div class="tab-pane" id="days-pane">
+        <h3 class="body-ah">Links from the past month</h3>
+        <br>
+        <div id="days">Loading...</div>
+      </div>
+
+      <div class="tab-pane" id="random-pane">
+        <h3 class="body-ah">Random</h3>
+        <br>
+        <div id="random">Loading...</div>
+      </div>
+
+      <div class="tab-pane" id="emails-pane">
+        <h3 class="body-ah">Users by email domain</h3>
+        <br>
+        <div id="emails">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  {% render_bundle 'admin-stats' %}
+{% endblock %}
+
+{% block templates %}
+  {% verbatim %}
+    <script id="random-template" type="text/x-handlebars-template">
+
+      <div class="row">
+        <div class="col-sm-3">Total links:</div>
+        <div class="col-sm-9">{{ total_link_count }}</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (user directed):</div>
+        <div class="col-sm-9">{{ private_user_direction }} ({{ private_user_percentage_of_private }}% of private, {{ private_user_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (domain):</div>
+        <div class="col-sm-9">{{ private_domain }} ({{ private_domain_percentage_of_private }}% of private, {{ private_domain_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (Perma-specific meta):</div>
+        <div class="col-sm-9">{{ private_meta_perma }} ({{ private_meta_perma_percentage_of_private }}% of private, {{ private_meta_perma_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (generic meta):</div>
+        <div class="col-sm-9">{{ private_meta }} ({{ private_meta_percentage_of_private }}% of private, {{ private_meta_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (takedowns):</div>
+        <div class="col-sm-9">{{ private_takedown }} ({{ private_takedown_percentage_of_private }}% of private, {{ private_takedown_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (flagged):</div>
+        <div class="col-sm-9">{{ private_flagged }} ({{ private_flagged_percentage_of_private }}% of private, {{ private_flagged_percentage_of_total }}% of total)</div>
+      </div>
+
+
+      <div class="row">
+        <div class="col-sm-3">Private links (meta tag failure):</div>
+        <div class="col-sm-9">{{ private_meta_failure }} ({{ private_meta_failure_percentage_of_private }}% of private, {{ private_meta_failure_percentage_of_total }}% of total)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Private links (total):</div>
+        <div class="col-sm-9">{{ private_link_count }} ({{ private_link_percentage }}%)</div>
+      </div>
+
+      <hr>
+
+      <div class="row">
+        <div class="col-sm-3">Links tagged "meta-tag-retrieval-failure":</div>
+        <div class="col-sm-9"><a href="/admin/perma/link/?q=meta-tag-retrieval-failure">{{ links_w_meta_failure_tag }} ({{ tagged_meta_failure_percentage_of_total }}% of total</a>)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Links tagged "timeout-failure":</div>
+        <div class="col-sm-9"><a href="/admin/perma/link/?q=timeout-failure">{{ links_w_timeout_failure_tag }} ({{ tagged_timeout_failure_percentage_of_total }}% of total)</a></div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Links tagged "browser-crashed":</div>
+        <div class="col-sm-9"><a href="/admin/perma/link/?q=browser-crashed">{{ links_w_browser_crashed_tag }} ({{ tagged_browser_crashed_percentage_of_total }}% of total)</a></div>
+      </div>
+
+      <hr>
+
+      <div class="row">
+        <div class="col-sm-3">Total users:</div>
+        <div class="col-sm-1">{{ total_user_count }}</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Unconfirmed users:</div>
+        <div class="col-sm-9">{{ unconfirmed_user_count }} ({{ unconfirmed_user_percentage }}%)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Users with exactly 10 links:</div>
+        <div class="col-sm-9">{{ users_with_ten_links }} ({{ users_with_ten_links_percentage }}%)</div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-3">Confirmed users with no links:</div>
+        <div class="col-sm-9">{{ confirmed_users_with_no_links }} ({{ confirmed_users_with_no_links_percentage }}%)</div>
+      </div>
+    </script>
+
+    <script id="days-template" type="text/x-handlebars-template">
+      <table class="table">
+        <tbody id="day">
+          <tr>
+            <th>Days<br>Ago</th>
+            <th>Count</th>
+            <th>Success</th>
+            <th>Pending</th>
+            <th>Failed</th>
+            <th>Capture Time (5% / 50% / 95%)</th>
+            <th>Queue Time (5% / 50% / 95%)</th>
+            <th colspan="6">Top Users</th>
+          </tr>
+          {{#each days}}
+            <tr>
+              <td title="{{ start_date }}-{{ end_date }}">{{ days_ago }}</td>
+              <td>{{ link_count }}</td>
+              <td>{{ statuses.success }}</td>
+              <td>{{ statuses.pending }}</td>
+              <td>{{ statuses.failed }}</td>
+              <td>{{ capture_time_dist }}</td>
+              <td>{{ wait_time_dist }}</td>
+              {{#each top_users}}
+                <td>{{ email }}</td>
+                <td>{{ links_count }}</td>
+              {{/each}}
+            </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </script>
+
+    <script id="emails-template" type="text/x-handlebars-template">
+      <div class="body-text" style="-webkit-column-count: 4; -moz-column-count: 4; column-count: 4;">
+        {{#each users_by_domain}}
+          .{{ domain }}: {{ count }}<br/>
+        {{/each}}
+      </div>
+    </script>
+
+    <script id="job_queue-template" type="text/x-handlebars-template">
+      <div class="row">
+        <div class="col-sm-4">
+          <h4>In progress:</h4>
+          {{#each active_jobs}}
+            {{ link_id }} attempt {{ attempt }}<br/>
+            {{ email }}<br/>
+            Started {{ capture_start_time }}<br/>
+            Step {{ step_count }}: {{ step_description }}<br/><br/>
+          {{/each}}
+        </div>
+        <div class="col-sm-4">
+          <h4>Human requests:</h4>
+          {{#each job_queues.human }}
+            {{ email }}: {{ count }}
+          {{/each}}
+        </div>
+        <div class="col-sm-4">
+          <h4>API requests:</h4>
+          {{#each job_queues.robot }}
+            User {{@key}}: {{this}} waiting
+          {{/each}}
+        </div>
+      </div>
+    </script>
+
+    <script id="celery_queues-template" type="text/x-handlebars-template">
+      <div class="row">
+        <div class="col-sm-3">Tasks in main queue:</div>
+        <div class="col-sm-9">{{ total_main_queue }}</div>
+      </div>
+      <div class="row">
+        <div class="col-sm-3">Tasks in background queue:</div>
+        <div class="col-sm-9">{{ total_background_queue }}</div>
+      </div>
+      <div class="row">
+        <div class="col-sm-3">Tasks in IA queue:</div>
+        <div class="col-sm-9">{{ total_ia_queue }}</div>
+      </div>
+      <div class="row">
+        <div class="col-sm-3">Tasks in IA readonly queue:</div>
+        <div class="col-sm-9">{{ total_ia_readonly_queue }}</div>
+      </div>
+      <div class="row">
+        <div class="col-sm-3">Tasks in WACZ conversion queue:</div>
+        <div class="col-sm-9">{{ total_wacz_conversion_queue }}</div>
+      </div>
+    </script>
+
+    <script id="celery-template" type="text/x-handlebars-template">
+      <div class="row">
+        {{#each queues}}
+          <div class="col-sm-6 queue-block">
+            <h4>{{ name }}</h4>
+            <div class="job-block">
+              {{#each active}}
+                {{name}}: {{#each args}}{{this}}{{/each}} {{#each kwargs}}{{@key}}: {{this}}{{/each}}<br/>
+              {{/each}}
+            </div>
+            <br>
+            <div class="job-block">
+              <h5>Next jobs (not a complete list):</h5>
+              {{#each reserved}}
+                {{name}}: {{#each args}}{{this}}{{/each}} {{#each kwargs}}{{@key}}: {{this}}{{/each}}<br/>
+              {{/each}}
+            </div>
+            <div class="job-block">
+              <br>
+              <h5>Finished task count:</h5>
+              {{#each stats.total}}
+                {{@key}}: {{this}}<br/>
+              {{/each}}
+            </div>
+          </div>
+        {{/each}}
+      </div>
+    </script>
+
+    <script id="rate_limits-template" type="text/x-handlebars-template">
+      <div class="row">
+        <div class="col-sm-4">Explicitly scheduled tasks in progress:<br><small>(not including any automatic/followup/derivative tasks)</small></div>
+        <div class="col-sm-8">{{ inflight }}</div>
+      </div>
+      <div class="row" style="padding-top: 4px;">
+        <div class="col-sm-4">Tasks in the IA Celery queue:</div>
+        <div class="col-sm-8">{{ total_ia_queue }}</div>
+      </div>
+      <div class="row">
+        <div class="col-sm-4">Tasks in the IA readonly Celery queue:</div>
+        <div class="col-sm-8">{{ total_ia_readonly_queue }}</div>
+      </div>
+      <hr>
+      <div class="row">
+        <div class="col-sm-3">General S3:</div>
+        <div class="col-sm-3">
+          <dl>
+            {{#each general_s3}}<dd>{{ @key }}:</dd><dt>{{this}}</dt>{{/each}}
+          </dl>
+        </div>
+        <div class="col-sm-1">Buckets:</div>
+        <div class="col-sm-5">
+          {{#each buckets}}
+            <div class="col-sm-6 bucket-stats">{{ @key }}</div>
+            <div class="col-sm-6 bucket-stats">
+              <dl>
+                {{#each this}}<dd>{{ @key }}:</dd><dt>{{this}}</dt>{{/each}}
+              </dl>
+            </div>
+          {{/each}}
+        </div>
+      </div>
+      <hr>
+      <div class="row">
+        <div class="col-sm-3">modify_xml.php:</div>
+        <div class="col-sm-9">
+          <dl>
+            {{#each modify_xml}}<dd>{{ @key }}:</dd><dt>{{this}}</dt>{{/each}}
+          </dl>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-sm-3">derive.php:</div>
+        <div class="col-sm-9">
+          <dl>
+            {{#each derive}}<dd>{{ @key }}:</dd><dt>{{this}}</dt>{{/each}}
+          </dl>
+        </div>
+      </div>
+      <hr>
+      <div class="row">
+        <div class="col-sm-3">All responses over limit:</div>
+        <div class="col-sm-9">
+          {{#each over_limit_details}}
+            <div class="over-limit">
+              <dl class="dl-horizontal">
+                <dt>bucket</dt><dd>{{bucket}}</dd>
+                {{#each detail}}<dt>{{ @key }}:</dt><dd>{{this}}</dd>{{/each}}
+                <dt>over_limit</dt><dd>{{over_limit}}</dd>
+              </dl>
+            </div>
+          {{/each}}
+        </div>
+    </script>
+
+    <script id="capture_errors-template" type="text/x-handlebars-template">
+      <div class="row">
+
+        <div class="col-sm-3">
+          <h4>Last hour</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.last_hour.completed }}  ({{ this.last_hour.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.last_hour.failed }}  ({{ this.last_hour.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.last_hour.celery_timeout }}  ({{ this.last_hour.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.last_hour.proxy_error }}  ({{ this.last_hour.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.last_hour.blocklist_error }}  ({{ this.last_hour.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.last_hour.playwright_error }}  ({{ this.last_hour.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.last_hour.timeout }}  ({{ this.last_hour.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.last_hour.didnt_load }}  ({{ this.last_hour.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+
+        <div class="col-sm-3">
+          <h4>Last 3 hours</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.last_3_hrs.completed }}  ({{ this.last_3_hrs.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.last_3_hrs.failed }}  ({{ this.last_3_hrs.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.last_3_hrs.celery_timeout }}  ({{ this.last_3_hrs.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.last_3_hrs.proxy_error }}  ({{ this.last_3_hrs.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.last_3_hrs.blocklist_error }}  ({{ this.last_3_hrs.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.last_3_hrs.playwright_error }}  ({{ this.last_3_hrs.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.last_3_hrs.timeout }}  ({{ this.last_3_hrs.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.last_3_hrs.didnt_load }}  ({{ this.last_3_hrs.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+
+        <div class="col-sm-3">
+          <h4>Last 24 hrs</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.last_24_hrs.completed }}  ({{ this.last_24_hrs.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.last_24_hrs.failed }}  ({{ this.last_24_hrs.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.last_24_hrs.celery_timeout }}  ({{ this.last_24_hrs.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.last_24_hrs.proxy_error }}  ({{ this.last_24_hrs.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.last_24_hrs.blocklist_error }}  ({{ this.last_24_hrs.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.last_24_hrs.playwright_error }}  ({{ this.last_24_hrs.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.last_24_hrs.timeout }}  ({{ this.last_24_hrs.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.last_24_hrs.didnt_load }}  ({{ this.last_24_hrs.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="row">
+
+        <div class="col-sm-3">
+          <h4>Last hour, previous day</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.last_hour_on_previous_day.completed }}  ({{ this.last_hour_on_previous_day.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.last_hour_on_previous_day.failed }}  ({{ this.last_hour_on_previous_day.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.last_hour_on_previous_day.celery_timeout }}  ({{ this.last_hour_on_previous_day.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.last_hour_on_previous_day.proxy_error }}  ({{ this.last_hour_on_previous_day.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.last_hour_on_previous_day.blocklist_error }}  ({{ this.last_hour_on_previous_day.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.last_hour_on_previous_day.playwright_error }}  ({{ this.last_hour_on_previous_day.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.last_hour_on_previous_day.timeout }}  ({{ this.last_hour_on_previous_day.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.last_hour_on_previous_day.didnt_load }}  ({{ this.last_hour_on_previous_day.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+
+        <div class="col-sm-3">
+          <h4>Last 3 hours, previous day</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.last_3_hrs_on_previous_day.completed }}  ({{ this.last_3_hrs_on_previous_day.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.last_3_hrs_on_previous_day.failed }}  ({{ this.last_3_hrs_on_previous_day.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.last_3_hrs_on_previous_day.celery_timeout }}  ({{ this.last_3_hrs_on_previous_day.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.last_3_hrs_on_previous_day.proxy_error }}  ({{ this.last_3_hrs_on_previous_day.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.last_3_hrs_on_previous_day.blocklist_error }}  ({{ this.last_3_hrs_on_previous_day.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.last_3_hrs_on_previous_day.playwright_error }}  ({{ this.last_3_hrs_on_previous_day.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.last_3_hrs_on_previous_day.timeout }}  ({{ this.last_3_hrs_on_previous_day.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.last_3_hrs_on_previous_day.didnt_load }}  ({{ this.last_3_hrs_on_previous_day.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+
+
+        <div class="col-sm-3">
+          <h4>Previous 24 hrs</h4>
+          <dl class="dl-horizontal">
+            <dt>Completed:</dt><dd>{{ this.previous_24_hrs.completed }}  ({{ this.previous_24_hrs.completed_percent}}%)</dd>
+            <dt>Failed:</dt><dd>{{ this.previous_24_hrs.failed }}  ({{ this.previous_24_hrs.failed_percent}}%)</dd>
+            <dt>Killed by Celery:</dt><dd>{{ this.previous_24_hrs.celery_timeout }}  ({{ this.previous_24_hrs.celery_timeout_percent}}%)</dd>
+            <dt>Proxy error:</dt><dd>{{ this.previous_24_hrs.proxy_error }}  ({{ this.previous_24_hrs.proxy_error_percent}}%)</dd>
+            <dt>Blocklist error:</dt><dd>{{ this.previous_24_hrs.blocklist_error }}  ({{ this.previous_24_hrs.blocklist_error_percent}}%)</dd>
+            <dt>Playwright error:</dt><dd>{{ this.previous_24_hrs.playwright_error }}  ({{ this.previous_24_hrs.playwright_error_percent}}%)</dd>
+            <dt>Scoop timeout:</dt><dd>{{ this.previous_24_hrs.timeout }}  ({{ this.previous_24_hrs.timeout_percent}}%)</dd>
+            <dt>URL didn't load:</dt><dd>{{ this.previous_24_hrs.didnt_load }}  ({{ this.previous_24_hrs.didnt_load_percent}}%)</dd>
+          </dl>
+        </div>
+    </script>
+  {% endverbatim %}
+{% endblock %}

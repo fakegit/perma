@@ -8,12 +8,7 @@
       "website": "http://university.edu/library",
       "date_created": "2013-06-26T00:00:00Z",
       "status": "approved",
-      "show_partner_status": true,
-      "partner_display_name": null,
-      "logo": "",
       "address": null,
-      "latitude": 42.377,
-      "longitude": -71.1167,
       "nonpaying": true,
       "base_rate": "0.00",
       "link_count": 0
@@ -28,12 +23,7 @@
       "website": "http://university2.edu/library",
       "date_created": "2014-07-27T00:00:00Z",
       "status": "pending",
-      "show_partner_status": false,
-      "partner_display_name": null,
-      "logo": "",
       "address": null,
-      "latitude": null,
-      "longitude": null,
       "nonpaying": true,
       "base_rate": "0.00",
       "link_count": 0
@@ -48,12 +38,7 @@
       "website": "http://university3.edu/library",
       "date_created": "2016-10-25T00:00:00Z",
       "status": "approved",
-      "show_partner_status": true,
-      "partner_display_name": null,
-      "logo": "",
       "address": null,
-      "latitude": 41.3163,
-      "longitude": -72.9223,
       "nonpaying": true,
       "base_rate": "0.00",
       "link_count": 0
@@ -68,12 +53,7 @@
       "website": "http://www.firm.com",
       "date_created": "2017-09-28T19:32:48Z",
       "status": "approved",
-      "show_partner_status": false,
-      "partner_display_name": "",
-      "logo": "",
       "address": "",
-      "latitude": null,
-      "longitude": null,
       "nonpaying": false,
       "base_rate": "1.00",
       "link_count": 0
@@ -170,6 +150,7 @@
       "password": "pbkdf2_sha256$30000$Dv7jdRxtSyqc$8LoTP7uO5dPsNGIkdlAnTFKbEgkFeEiybEudRxuVIj0=",
       "last_login": "2017-09-28T19:32:28Z",
       "email": "test_admin_user@example.com",
+      "raw_email": "test_admin_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -182,8 +163,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -193,6 +173,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2013-07-23T18:56:14Z",
       "email": "test_registrar_user@example.com",
+      "raw_email": "test_registrar_user@example.com",
       "registrar": 1,
       "pending_registrar": null,
       "is_active": true,
@@ -205,8 +186,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -216,6 +196,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "test_org_user@example.com",
+      "raw_email": "test_org_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -228,10 +209,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        1
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -241,6 +219,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "test_user@example.com",
+      "raw_email": "test_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -253,8 +232,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -264,6 +242,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "test_org_rando_user@example.com",
+      "raw_email": "test_org_rando_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -276,10 +255,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        1
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -289,6 +265,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "test_another_org_user@example.com",
+      "raw_email": "test_another_org_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -301,10 +278,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        3
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -314,6 +288,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "test_another_library_org_user@example.com",
+      "raw_email": "test_another_library_org_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -326,11 +301,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        3,
-        4
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -340,6 +311,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "test_requested_registrar_account@example.com",
+      "raw_email": "test_requested_registrar_account@example.com",
       "registrar": null,
       "pending_registrar": 2,
       "is_active": true,
@@ -352,8 +324,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -363,6 +334,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2013-07-23T18:56:14Z",
       "email": "another_library_user@example.com",
+      "raw_email": "another_library_user@example.com",
       "registrar": 2,
       "pending_registrar": null,
       "is_active": true,
@@ -375,8 +347,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -386,6 +357,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:38:27Z",
       "email": "multi_registrar_org_user@example.com",
+      "raw_email": "multi_registrar_org_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -398,13 +370,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        1,
-        2,
-        3,
-        4
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -414,6 +380,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2016-10-17T18:38:27Z",
       "email": "test_yet_another_library_org_user@example.com",
+      "raw_email": "test_yet_another_library_org_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -426,10 +393,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        4
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -439,6 +403,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2016-10-18T18:56:14Z",
       "email": "deactivated_registrar_user@example.com",
+      "raw_email": "deactivated_registrar_user@example.com",
       "registrar": 2,
       "pending_registrar": null,
       "is_active": false,
@@ -451,8 +416,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -462,6 +426,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2016-10-18T18:56:14Z",
       "email": "unactivated_registrar_user@example.com",
+      "raw_email": "unactivated_registrar_user@example.com",
       "registrar": 2,
       "pending_registrar": null,
       "is_active": false,
@@ -474,8 +439,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -485,6 +449,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2016-10-18T18:56:14Z",
       "email": "unactivated_court_user@example.com",
+      "raw_email": "unactivated_court_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": false,
@@ -497,8 +462,7 @@
       "requested_account_type": "court",
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -508,6 +472,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2016-10-18T18:56:14Z",
       "email": "unactivated_journal_user@example.com",
+      "raw_email": "unactivated_journal_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": false,
@@ -520,8 +485,7 @@
       "requested_account_type": "journal",
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -531,6 +495,7 @@
       "password": "pbkdf2_sha256$10000$56cl09Msiau4$IoOlZ+P/I3MJJG+ZxYtH9mb6c+B+VQELqwWyb3ubdWE=",
       "last_login": "2016-10-18T18:56:14Z",
       "email": "unactivated_faculty_user@example.com",
+      "raw_email": "unactivated_faculty_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": false,
@@ -543,8 +508,7 @@
       "requested_account_type": "faculty",
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -554,6 +518,7 @@
       "password": "pbkdf2_sha256$30000$hSV3yzdacQEo$glE2Q5YUR3jYpyfvNLHi/r31XJs0oObqiNZXjhXFAps=",
       "last_login": null,
       "email": "registrar_user@firm.com",
+      "raw_email": "registrar_user@firm.com",
       "registrar": 4,
       "pending_registrar": null,
       "is_active": true,
@@ -566,8 +531,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": []
+      "link_limit": 10
     }
   },
   {
@@ -577,6 +541,7 @@
       "password": "pbkdf2_sha256$30000$QP5GYS5jwwAH$UhRTdy8rvIMQEB0qArvC8OqGil1MYRrg/Jv79Nfn2ro=",
       "last_login": null,
       "email": "case_one_lawyer@firm.com",
+      "raw_email": "case_one_lawyer@firm.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -589,10 +554,7 @@
       "requested_account_type": null,
       "requested_account_note": null,
       "link_count": 0,
-      "link_limit": 10,
-      "organizations": [
-        5
-      ]
+      "link_limit": 10
     }
   },
   {
@@ -602,6 +564,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "test_nonpaying_user@example.com",
+      "raw_email": "test_nonpaying_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -615,7 +578,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true
     }
   },
@@ -626,6 +588,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "test_sponsored_user@example.com",
+      "raw_email": "test_sponsored_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -640,7 +603,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true
     }
   },
@@ -663,6 +625,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "another_sponsored_user@example.com",
+      "raw_email": "another_sponsored_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -676,7 +639,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true
     }
   },
@@ -711,6 +673,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "inactive_sponsored_user@example.com",
+      "raw_email": "inactive_sponsored_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -724,7 +687,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true
     }
   },
@@ -747,6 +709,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2013-07-23T18:55:25Z",
       "email": "another_inactive_sponsored_user@example.com",
+      "raw_email": "another_inactive_sponsored_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -760,7 +723,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true
     }
   },
@@ -783,6 +745,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2002-02-28T00:00:00Z",
       "email": "functional_test_user@example.com",
+      "raw_email": "functional_test_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -796,7 +759,6 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 10,
-      "organizations": [],
       "nonpaying": true,
       "unlimited": true
     }
@@ -808,6 +770,7 @@
       "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
       "last_login": "2002-02-28T00:00:00Z",
       "email": "over_limit_user@example.com",
+      "raw_email": "over_limit_user@example.com",
       "registrar": null,
       "pending_registrar": null,
       "is_active": true,
@@ -821,10 +784,122 @@
       "requested_account_note": null,
       "link_count": 0,
       "link_limit": 0,
-      "organizations": [],
       "nonpaying": false,
       "unlimited": false,
       "in_trial": true
+    }
+  },
+  {
+    "model": "perma.linkuser",
+    "pk": 26,
+    "fields": {
+      "password": "pbkdf2_sha256$10000$gtsGKyK7FARJ$MdCKh7SZhd6uDz1enPxcNAn3fM0L7o5OAKd1/VjXiqk=",
+      "last_login": "2002-02-28T00:00:00Z",
+      "email": "wacz_functional_test_user@example.com",
+      "raw_email": "wacz_functional_test_user@example.com",
+      "registrar": null,
+      "pending_registrar": null,
+      "is_active": true,
+      "is_confirmed": true,
+      "is_staff": false,
+      "date_joined": "2002-02-28T00:00:00Z",
+      "first_name": "WACZ Functional Test",
+      "last_name": "User",
+      "root_folder": 68,
+      "requested_account_type": null,
+      "requested_account_note": null,
+      "link_count": 0,
+      "link_limit": 10,
+      "nonpaying": true,
+      "unlimited": true
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 1,
+    "fields": {
+      "organization": 1,
+      "user": 3
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 2,
+    "fields": {
+      "organization": 1,
+      "user": 5
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 3,
+    "fields": {
+      "organization": 3,
+      "user": 6
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 4,
+    "fields": {
+      "organization": 3,
+      "user": 7
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 5,
+    "fields": {
+      "organization": 4,
+      "user": 7
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 7,
+    "fields": {
+      "organization": 1,
+      "user": 10
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 8,
+    "fields": {
+      "organization": 2,
+      "user": 10
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 9,
+    "fields": {
+      "organization": 3,
+      "user": 10
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 10,
+    "fields": {
+      "organization": 4,
+      "user": 10
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 11,
+    "fields": {
+      "organization": 4,
+      "user": 11
+    }
+  },
+  {
+    "model": "perma.userorganizationaffiliation",
+    "pk": 12,
+    "fields": {
+      "organization": 5,
+      "user": 18
     }
   }
 ]

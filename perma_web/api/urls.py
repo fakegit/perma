@@ -1,26 +1,18 @@
 from django.conf import settings
-from django.conf.urls import url, include
+from django.conf.urls import include
 from django.http import HttpResponse
-from django.views.generic import RedirectView
+from django.urls import re_path
 from rest_framework.routers import APIRootView
 
 from perma.urls import guid_pattern
 
 from . import views
 
-
-# helpers
-class RedirectWithRootDomain(RedirectView):
-    def get_redirect_url(self, *args, **kwargs):
-        url = super(RedirectWithRootDomain, self).get_redirect_url(*args, **kwargs)
-        return self.request.scheme + '://' + settings.HOST + url
-
 # list views that should appear in the HTML version of the API root
 root_view = APIRootView.as_view(api_root_dict={
     'folders': 'folders',
     'capture_jobs': 'capture_jobs',
     'archives': 'archives',
-    'public_archives': 'public_archives',
     'organizations': 'organizations',
     'user': 'user',
 })
@@ -34,64 +26,63 @@ legacy_user_prefix = r'^(?:user/)?'
 
 urlpatterns = [
     # /v1
-    url('^v1/', include([
+    re_path('^v1/', include([
         # /folders
-        url(legacy_user_prefix + r'folders/?$', views.FolderListView.as_view(), name='folders'),
+        re_path(legacy_user_prefix + r'folders/?$', views.FolderListView.as_view(), name='folders'),
         # /folders/:id
-        url(legacy_user_prefix + r'folders/(?P<pk>[0-9]+)/?$', views.FolderDetailView.as_view()),
+        re_path(legacy_user_prefix + r'folders/(?P<pk>[0-9]+)/?$', views.FolderDetailView.as_view()),
         # /folders/:id/folders
-        url(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/folders/?$', views.FolderListView.as_view()),
+        re_path(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/folders/?$', views.FolderListView.as_view()),
         # /folders/:id/folders/:id
-        url(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/folders/(?P<pk>[0-9]+)/?$', views.FolderDetailView.as_view()),
+        re_path(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/folders/(?P<pk>[0-9]+)/?$', views.FolderDetailView.as_view()),
         # /folders/:id/archives
-        url(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/?$', views.AuthenticatedLinkListView.as_view()),
+        re_path(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/?$', views.AuthenticatedLinkListView.as_view()),
         # /folders/:id/archives/export
-        url(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/export/?$', views.AuthenticatedLinkListExportView.as_view()),
+        re_path(r'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/export/?$', views.AuthenticatedLinkListExportView.as_view()),
         # /folders/:id/archives/:guid
-        url(fr'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/{guid_pattern}/?$', views.MoveLinkView.as_view()),
+        re_path(fr'^(?P<parent_type>folders)/(?P<parent_id>[0-9]+)/archives/{guid_pattern}/?$', views.MoveLinkView.as_view()),
 
         # /public/archives
-        url(r'^public/archives/?$', views.PublicLinkListView.as_view(), name='public_archives'),
-        # /public/archives/:guid
-        url(fr'^public/archives/{guid_pattern}/?$', views.PublicLinkDetailView.as_view(), name='public_archives'),
-        # /public/archives/:guid/download
-        url(fr'^public/archives/{guid_pattern}/download/?$', views.PublicLinkDownloadView.as_view(), name='public_archives_download'),
+        re_path(r'^public/archives/?$', views.PublicLinkListView.as_view(), name='public_archives'),
         # /archives
-        url(legacy_user_prefix + r'archives/?$', views.AuthenticatedLinkListView.as_view(), name='archives'),
+        re_path(legacy_user_prefix + r'archives/?$', views.AuthenticatedLinkListView.as_view(), name='archives'),
         # /archives/export
-        url(legacy_user_prefix + r'archives/export/?$', views.AuthenticatedLinkListExportView.as_view(), name='archives_export'),
+        re_path(legacy_user_prefix + r'archives/export/?$', views.AuthenticatedLinkListExportView.as_view(), name='archives_export'),
         # /archives/batches
-        url(legacy_user_prefix + r'archives/batches/?$', views.LinkBatchesListView.as_view(), name='link_batches'),
+        re_path(legacy_user_prefix + r'archives/batches/?$', views.LinkBatchesListView.as_view(), name='link_batches'),
         # /archives/batches/:id
-        url(legacy_user_prefix + r'archives/batches/(?P<pk>[0-9]+)/?$', views.LinkBatchesDetailView.as_view(), name='link_batch'),
+        re_path(legacy_user_prefix + r'archives/batches/(?P<pk>[0-9]+)/?$', views.LinkBatchesDetailView.as_view(), name='link_batch'),
         # /archives/batches/:id/export
-        url(legacy_user_prefix + r'archives/batches/(?P<pk>[0-9]+)/export/?$', views.LinkBatchesDetailExportView.as_view(), name='link_batch_export'),
+        re_path(legacy_user_prefix + r'archives/batches/(?P<pk>[0-9]+)/export/?$', views.LinkBatchesDetailExportView.as_view(), name='link_batch_export'),
         # /archives/:guid
-        url(legacy_user_prefix + fr'archives/{guid_pattern}/?$', views.AuthenticatedLinkDetailView.as_view(), name='archives'),
+        re_path(legacy_user_prefix + fr'archives/{guid_pattern}/?$', views.AuthenticatedLinkDetailView.as_view(), name='archives'),
         # /archives/:guid/download
-        url(legacy_user_prefix + fr'archives/{guid_pattern}/download/?$', views.AuthenticatedLinkDownloadView.as_view(), name='archives_download'),
+        re_path(legacy_user_prefix + fr'archives/{guid_pattern}/download/?$', views.AuthenticatedLinkDownloadView.as_view(), name='archives_download'),
 
         # /capture_jobs
-        url(legacy_user_prefix + r'capture_jobs/?$', views.CaptureJobListView.as_view(), name='capture_jobs'),
+        re_path(legacy_user_prefix + r'capture_jobs/?$', views.CaptureJobListView.as_view(), name='capture_jobs'),
         # /capture_jobs/:id
-        url(legacy_user_prefix + r'capture_jobs/(?P<pk>[0-9]+)/?$', views.CaptureJobDetailView.as_view()),
+        re_path(legacy_user_prefix + r'capture_jobs/(?P<pk>[0-9]+)/?$', views.CaptureJobDetailView.as_view()),
         # /capture_jobs/:guid
-        url(legacy_user_prefix + fr'capture_jobs/{guid_pattern}/?$', views.CaptureJobDetailView.as_view()),
+        re_path(legacy_user_prefix + fr'capture_jobs/{guid_pattern}/?$', views.CaptureJobDetailView.as_view()),
 
         # /organizations
-        url(legacy_user_prefix + r'organizations/?$', views.OrganizationListView.as_view(), name='organizations'),
+        re_path(legacy_user_prefix + r'organizations/?$', views.OrganizationListView.as_view(), name='organizations'),
         # /organizations/:id
-        url(legacy_user_prefix + r'organizations/(?P<pk>[0-9]+)/?$', views.OrganizationDetailView.as_view()),
+        re_path(legacy_user_prefix + r'organizations/(?P<pk>[0-9]+)/?$', views.OrganizationDetailView.as_view()),
 
         # /user
-        url(r'^user/?$', views.LinkUserView.as_view(), name='user'),
+        re_path(r'^user/?$', views.LinkUserView.as_view(), name='user'),
+
+        # /internal/daily_link_counts
+        re_path(r'^internal/daily_link_counts/?$', views.InternalDailyLinkCountsView.as_view(), name='internal_daily_link_counts'),
 
         # / ('/v1/' only, not '/v1')
-        url(r'^$', root_view)
+        re_path(r'^$', root_view)
     ])),
 
     # redirect plain api.perma.cc/ and perma.cc/api/ to docs:
-    url(r'^$', RedirectWithRootDomain.as_view(url='/docs/developer'))
+    re_path(r'^$', views.DeveloperDocsView.as_view())
 ]
 
 ### error handlers ###
@@ -105,11 +96,11 @@ def handler500(request):
 
 if settings.DEBUG and hasattr(settings, 'DEBUG_TOOLBAR_CONFIG'):
     import debug_toolbar
-    urlpatterns += [url(r'^__debug__/', include(debug_toolbar.urls))]
+    urlpatterns += [re_path(r'^__debug__/', include(debug_toolbar.urls))]
 
 # views that only load when running our tests:
-# if settings.TESTING:
-from .tests import views as test_views
-urlpatterns += [
-    url(r'tests/redirect-to-file$', test_views.redirect_to_file, name='redirect_to_file')
-]
+if settings.TESTING:
+    from .tests import views as test_views
+    urlpatterns += [
+        re_path(r'tests/redirect-to-file$', test_views.redirect_to_file, name='redirect_to_file')
+    ]

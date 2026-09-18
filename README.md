@@ -5,22 +5,21 @@ Perma - indelible links
 
 Perma.cc helps authors and journals create permanent archived citations in their published work.
 
-
-[![CircleCI](https://circleci.com/gh/harvard-lil/perma.svg?style=svg)](https://circleci.com/gh/harvard-lil/perma) [![codecov](https://codecov.io/gh/harvard-lil/perma/branch/develop/graph/badge.svg?token=PmUtgx6QFh)](https://codecov.io/gh/harvard-lil/perma)
+[![test status](https://github.com/harvard-lil/perma/actions/workflows/tests.yml/badge.svg)](https://github.com/harvard-lil/perma/actions)
+[![codecov](https://codecov.io/gh/harvard-lil/perma/branch/develop/graph/badge.svg?token=PmUtgx6QFh)](https://codecov.io/gh/harvard-lil/perma)
 
 ## Connect with Perma.cc
 
 - Use Perma.cc at [Perma.cc](https://perma.cc)
-- Twitter [@permacc](https://twitter.com/permacc)
 - Email us at [info@perma.cc](mailto:info@perma.cc)
 
 ## Installation
 
-If you're installing Perma.cc, see [the installation doc](https://github.com/harvard-lil/perma/blob/develop/install.md)
+If you're installing Perma.cc, see [the installation section of the developer doc](https://github.com/harvard-lil/perma/blob/develop/developer.md#installing-perma).
 
 ## Developing in Perma.cc
 
-If you're wrenchin' on Perma.cc, see [the installation doc](https://github.com/harvard-lil/perma/blob/develop/install.md) and [the developer doc](https://github.com/harvard-lil/perma/blob/develop/developer.md).
+If you're wrenchin' on Perma.cc, see [the developer doc](https://github.com/harvard-lil/perma/blob/develop/developer.md).
 
 ## License
 

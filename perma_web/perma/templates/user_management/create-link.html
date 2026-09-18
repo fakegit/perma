@@ -1,168 +1,46 @@
 {% extends "base-responsive.html" %}
 {% load render_bundle from webpack_loader %}
+{% load waffle_tags %}
 
 {% block title %} | Create a Perma link{% endblock %}
 {% block bodyFlags %}{% endblock bodyFlags %}
 {% block mainFlags %}_create{% if selected_org.default_to_private %} _isPrivate{% else %} _isPublic{% endif %}{% endblock mainFlags %}
 {% block styles %}
-  {% render_bundle 'create' 'css' %}
+  {% render_bundle 'dashboard' 'css' %}
 {% endblock %}
+
 
 {% block mainContent %}
 
-  <!-- regular link creation -->
-  <div id="create-item-container" class="container cont-full-bleed">
-    <div class="container cont-fixed">
-      <h1 class="create-title">Create a new <span class="nobreak">Perma Link</span></h1>
-      <p class="create-lede">Enter any URL to preserve it forever.</p>
-    </div>
-    <div class="container cont-full-bleed cont-sm-fixed">
-      <form class="form-priority"
-            id="linker"
-            method="post">
-        <fieldset class="form-priority-fieldset">
-          <input id="rawUrl"
-                 name="url"
-                 class="text-input select-on-click form-priority-input"
-                 type="text"
-                 placeholder="Paste your URL here."
-                 data-placement="bottom"
-                 data-content="To save a link, enter its URL and click the <strong>Create Perma Link</strong> button. To see the links you've saved, click <strong>Library</strong> in the menu to the left."
-                 data-original-title="Start building your library"
-                 data-html="true"
-                 data-trigger="manual"
-                 />
-          <div class="wrapper">
-            <button disabled="disabled"
-                    class="btn btn-large btn-info _active-when-valid"
-                    id="addlink"
-                    type="submit">
-                Create Perma Link
-            </button>
-            <p id="create-batch-links">or <a id="create-batch" data-toggle="modal" href="#batch-modal">create multiple links</a></p>
-          </div>
-
-          {% if request.user.is_individual %}
-            <p id="links-remaining-message">
-              {% if subscription_status == 'problem' %}
-                Your subscription is on hold due to a <a href="{% url 'user_management_settings_usage_plan' %}">problem with your credit card</a>.<br>
-              {% endif %}
-              {% if links_remaining == 'Infinity' %}
-                {% if request.user.nonpaying %}
-                  Your account has been upgraded to unlimited personal Perma Links.
-                {% else %}
-                  Your <a href="{% url 'user_management_settings_usage_plan' %}">subscription</a> includes the creation of unlimited Perma Links.
-                {% endif %}
-              {% else %}
-                  You have <span class="links-remaining">{{ links_remaining }}</span> remaining Perma Links{% if links_remaining_period == "monthly" %} this month{% elif links_remaining_period == "annually" %} this year{% endif %}.
-                  {% if not request.user.nonpaying and not subscription_status == 'problem' %}
-                    <br><a href="{% url 'user_management_settings_usage_plan' %}">View your subscription details or get more Perma Links</a>
-                  {% endif %}
-              {% endif %}
-            </p>
-          {% else %}
-            <div id="organization_select_form">
-              <span class="label-affil">This Perma Link will be affiliated with</span>
-              <div class="dropdown dropdown-affil">
-                <button class="dropdown-toggle selector selector-affil needsclick" type="button" id="dropdownMenu1" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
-                  Please select a folder
-                </button>
-                <ul class="dropdown-menu selector-menu" aria-labelledby="dropdownMenu1" id="organization_select"></ul>
-              </div>
-            </div>
-            <p id="personal-links-banner" class="hide">
-              {% if subscription_status == 'problem' %}
-                <a href="{% url 'user_management_settings_usage_plan' %}">Your account is on hold</a>.<br>
-              {% elif links_remaining != 'Infinity' and not request.user.nonpaying %}
-                get <a href="{% url 'user_management_settings_usage_plan' %}">more personal links</a>
-               {% endif %}
-            </p>
-          {% endif %}
-        </fieldset>
-        {% if suppress_reminder != 'true' %}
-          <p id="browser-tools-message" class="limit-{% if request.user.is_individual %}true{% else %}false{% endif %}">
-            To make Perma links more quickly, try our <a href="{% url 'user_management_settings_tools' %}">browser tools</a>.
-            <button type="button" class="close-browser-tools btn-link">
-              <span aria-hidden="true">&times;</span>
-              <span class="sr-only">Close</span>
-            </button>
-          </p>
-        {% endif %}
-      </form><!--/#linker-->
-    </div><!-- cont-full-bleed cont-sm-fixed -->
-  </div><!-- container cont-full-bleed -->
-
-<!-- our container for error messages -->
-<div class="create-errors container cont-fixed">
-  <div id="error-container" class="_hide"></div>
-</div>
-<!-- / our container for error messages -->
-
-
-<!-- Your Perma Links -->
-{% if messages %}
-<div class="container cont-fixed">
-  <div class="row">
-    {% for message in messages %}
-      <div class="alert alert-{% if message.level >= 30 %}danger{% else %}success{% endif %}" style="clear:both; margin:1em">{% if 'safe' in message.tags %}{{ message|safe }}{% else %}{{ message }}{% endif %}</div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-<div class="container cont-fixed manage-links">
-  <div class="row">
-    <div class="col-md-3 col-folders">
-      <div id="batch-list-container" class="_hide">
-        <div id="batch-list-toggle">
-          <a role="button" class="dropdown" data-toggle="collapse" href="#batch-history" aria-expanded="false" aria-controls="batch-history">
-            <h3>Link Batch History</h3>
-          </a>
-        </div>
-        <div id="batch-history" class="collapse">
-        </div>
-      </div>
-      <div class="panel-heading">
-        Folders
-        <span class="buttons">
-          <a href="#" class="pull-right delete-folder icon-trash" title="Delete Selected Folder"></a>
-          <a href="#" class="pull-right edit-folder icon-edit" title="Rename Selected Folder"></a>
-          <a href="#" class="pull-right new-folder icon-plus" title="New Folder"></a>
-        </span>
-      </div>
-      <div id="folder-tree"></div>
-    </div>
-
-    <div class="col-md-9 col-links">
-      <div class="container link-headers">
-        <div class="row">
-          <div class="col-xs-12">
-            <h3 id="link-list-header" class="body-ah">Your Perma Links</h3>
-          </div>
-        </div>
-      </div>
-      {% include "user_management/includes/search_form.html" with search_placeholder="Search" %}
-      <div class="container item-rows"></div>
-    </div>
-  </div>
-</div>
-<!-- / Your Perma Links -->
+<!-- vue app -->
+<div id="vue-app"></div>
 
 {% endblock %}
 
 {% block scripts %}
   {{ block.super }}
-
+  
   <script>
-    var contact_url = "{% url 'contact' %}",
+    // Pass a global waffle object to JS
+    {% wafflejs %}
+
+    var urls = {contact: "{% url 'contact' %}"},
         links_remaining = Number({{ links_remaining }}),
         link_creation_allowed = {{ link_creation_allowed | yesno:"true,false" }},
         current_user = {{ request.user.as_json|safe }},
         host = "{{ request.get_host }}",
-        workers = {{ workers }},
-        average = {{ average }};
+        subscription_status = "{{ subscription_status }}",
+        links_remaining_period = "{{ links_remaining_period }}",
+        is_individual = {{ request.user.is_individual | yesno:"true,false" }},
+        is_sponsored_user = {{ request.user.is_sponsored_user | yesno:"true,false" }},
+        is_staff = {{ request.user.is_staff | yesno:"true,false" }},
+        is_organization_user = {{ request.user.is_organization_user | yesno:"true,false" }},
+        is_registrar_user = {{ request.user.is_registrar_user | yesno:"true,false" }},
+        is_nonpaying = {{ request.user.nonpaying | yesno:"true,false" }},
+        max_size = {{ max_size }};
   </script>
 
-  {% render_bundle 'create' 'js' %}
+{% render_bundle 'dashboard' 'js' %}
 
 {% endblock %}
 

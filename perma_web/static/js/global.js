@@ -1,6 +1,21 @@
+import * as Sentry from "@sentry/browser";
+
+if (settings.USE_SENTRY) {
+  Sentry.init({
+    dsn: settings.SENTRY_DSN,
+    environment: settings.SENTRY_ENVIRONMENT,
+    denyUrls: ['^https\:\/\/' + settings.PLAYBACK_HOST + '\/.*$'],
+
+    // Set tracesSampleRate to 1.0 to capture 100%
+    // of transactions for performance monitoring.
+    // We recommend adjusting this value in production
+    tracesSampleRate: settings.SENTRY_TRACES_SAMPLE_RATE,
+
+  });
+}
+
 var FastClick = require('fastclick');
 
-var ErrorHandler = require('./error-handler.js');
 var Helpers = require('./helpers/general.helpers.js');
 require('./helpers/fix-links.js');  // https://github.com/harvard-lil/accessibility-tools/tree/master/code/fix-links
 
@@ -8,6 +23,7 @@ require('./helpers/fix-links.js');  // https://github.com/harvard-lil/accessibil
 require('bootstrap-js/dropdown');  // make menus work
 require('bootstrap-js/collapse');  // make menu toggle for small screen work
 require('bootstrap-js/carousel');  // make carousels work
+require('bootstrap-js/tab');       // make tabs work (used on /manage/stats)
 
 // We used to use modernizr but have currently dropped it.
 // If we want to include it again this is where to put it --
@@ -16,9 +32,6 @@ require('bootstrap-js/carousel');  // make carousels work
 
 // initialize fastclick
 FastClick.attach(document.body);
-
-// initialize airbrake
-ErrorHandler.init();
 
 // set up jquery to properly set CSRF header on AJAX post
 // via https://docs.djangoproject.com/en/dev/ref/contrib/csrf/#ajax
@@ -49,5 +62,15 @@ $(document).on('click', '.popup-alert', function() {
 // put focus on first form input element when a form is revealed by bootstrap UI
 $('.collapse').on('shown.bs.collapse', function () {
   $(this).find('input[type="text"]').focus();
+});
+
+// add trap to contact and report forms
+$('.contact-form form').submit(function() {
+  $(this).append('<input type="hidden" name="javascript" value="true"> ');
+});
+
+// add trap to signup forms
+$('.signup-learnMore-form form').submit(function() {
+  $(this).append('<input type="hidden" name="javascript" value="true"> ');
 });
 

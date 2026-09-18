@@ -1,0 +1,35 @@
+{% extends "settings-layout.html" %}
+{% block title %} | Settings{% endblock %}
+{% block dashboardContent %}
+
+  {% if payment_status_message %}
+    <div class="alert alert-{{ payment_status_level }} alert-block">{{ payment_status_message }}</div>
+  {% endif %}
+
+  {% for account in accounts %}
+    {% with subscription=account.subscription %}
+      {% with customer=account.customer %}
+        {% with customer_type=customer.customer_type %}
+
+          {% if customer_type == 'Registrar' %}
+            <h2 class="body-ah">Registrar Subscription &mdash; {{ customer.name }}</h2>
+          {% else %}
+            <h2 class="body-ah">Personal Subscription</h2>
+          {% endif %}
+
+          {% if not subscription %}
+            {% include 'includes/subscription-purchase.html' %}
+          {% else %}
+            {% include 'includes/subscription-details.html' %}
+          {% endif %}
+
+        {% endwith %}
+      {% endwith %}
+    {% endwith %}
+  {% endfor %}
+
+  {% if request.user.can_purchase_bonus_links %}
+    {% include 'includes/bonus-links-purchase.html' %}
+  {% endif %}
+
+{% endblock %}

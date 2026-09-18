@@ -1,77 +1,105 @@
-FROM registry.lil.tools/library/debian:11.3
+# Extract Playwright version from uv.lock prior to building main image
+FROM registry.lil.tools/library/python:3.11-bookworm AS extract-playwright-version
+COPY perma_web/uv.lock /tmp/uv.lock
+RUN grep -A 1 '^name = "playwright"$' /tmp/uv.lock | grep version | cut -d'"' -f2 > /tmp/.playwright-version
+
+# Main image
+FROM registry.lil.tools/library/python:3.11-bookworm
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_SRC=/usr/local/src \
-    OPENSSL_CONF=/etc/ssl
+    OPENSSL_CONF=/etc/ssl \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 RUN mkdir -p /perma/perma_web
 WORKDIR /perma/perma_web
 
+# For fonts-roboto and ttf-mscorefonts-installer
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib" > /etc/apt/sources.list \
+    && echo "deb https://deb.debian.org/debian-security bookworm-security main contrib" >> /etc/apt/sources.list \
+    && echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections
+
 # Get build dependencies and packages required by the app
 RUN apt-get update \
-    && apt-get install -y wget \
-    && apt-get install -y curl \
-    && apt-get install -y bzip2 \
-    && apt-get install -y gnupg \
-    && apt-get install -y python3-pip \
-    && apt-get install -y python3-dev \
-    && apt-get install -y python-is-python3 \
-    && apt-get install -y virtualenv \
-    && apt-get install -y git \
-    \
-    && apt-get install -y postgresql-client \
-    && apt-get install -y libpq-dev \
-    && apt-get install -y xvfb \
-    && apt-get install -y libffi-dev \
-    && apt-get install -y libjpeg62-turbo-dev \
-    && apt-get install -y libfontconfig1 \
-    && apt-get install -y imagemagick \
-    && apt-get install -y libmagickwand-dev
+    && apt-get install -y \
+        wget \
+        curl \
+        bzip2 \
+        gnupg \
+        python3-pip \
+        python3-dev \
+        python-is-python3 \
+        virtualenv \
+        git \
+        nano \
+        procps `# ps and pkill` \
+        \
+        postgresql-client \
+        libpq-dev \
+        libffi-dev \
+        libnss3-tools                           `# for certutil` \
+        libxml2-dev \
+        libxslt-dev
 
-# Install commonly used web fonts for better screen shots.
-RUN echo "deb http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list \
-    && echo "deb https://deb.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list \
-    && echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections \
-    && apt-get update \
-    && apt-get install -y ttf-mscorefonts-installer \
-    && apt-get install -y fonts-roboto
+# node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs=20.13.0-1nodesource1
 
-# Install a cert for use by warcprox
-COPY services/warcprox/perma-warcprox-ca.pem /perma/perma_web
-RUN apt-get update && apt-get install -y libnss3-tools \
-    && mkdir -p $HOME/.pki/nssdb \
+# uv package manager
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy Playwright version extracted in first stage
+COPY --from=extract-playwright-version /tmp/.playwright-version /tmp/.playwright-version
+
+# Install Playwright browsers for integration tests
+RUN  apt-get update && apt install -y --no-install-recommends libdbus-glib-1-2 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libwayland-client0 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libx11-xcb1 \
+    libxcursor1 \
+    libgtk-3-0 \
+    libpangocairo-1.0-0 \
+    libcairo-gobject2 \
+    libgdk-pixbuf-2.0-0
+
+RUN mkdir -p $HOME/.pki/nssdb \
     && certutil -d $HOME/.pki/nssdb -N --empty-password \
-    && certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n 'warcprox CA cert' -i perma-warcprox-ca.pem
+    && uvx playwright@$(cat /tmp/.playwright-version) install chromium firefox \
+    && ln -sf "$(find /root/.cache/ms-playwright -name 'chrome' -type f -executable | head -1)" /usr/local/bin/playwright-chromium
 
-# Install Tor, for optional use as a proxy
-RUN apt-get update && apt-get install -y tor
-
-# pin node version -- see https://github.com/nodesource/distributions/issues/33
-ARG BUILDARCH
-ENV BUILDARCH=${BUILDARCH:-amd64}
-RUN curl -o nodejs.deb https://deb.nodesource.com/node_14.x/pool/main/n/nodejs/nodejs_14.19.0-deb-1nodesource1_${BUILDARCH}.deb \
-    && dpkg -i ./nodejs.deb \
-    && rm nodejs.deb
-
-# npm
+# Frontend requirements
 COPY perma_web/package.json /perma/perma_web
 COPY perma_web/npm-shrinkwrap.json /perma/perma_web
 RUN npm install \
     && rm package.json \
     && rm npm-shrinkwrap.json
 
-# python requirements
-COPY perma_web/requirements.txt /perma/perma_web
-RUN pip install pip==22.0.4 \
-    && pip install -r /perma/perma_web/requirements.txt \
-    && rm /perma/perma_web/requirements.txt
+# Worker requirements
+COPY services/js-wacz/package.json /perma/services/js-wacz/package.json
+COPY services/js-wacz/package-lock.json /perma/services/js-wacz/package-lock.json
+RUN npm install --prefix /perma/services/js-wacz/ \
+    && rm /perma/services/js-wacz/package.json \
+    && rm /perma/services/js-wacz/package-lock.json
 
-# Install Chromium and driver
-ENV CHROMIUM_VERSION=100.0.4896.127-1~deb11u1
-RUN apt-get update && apt-get install -y chromium=${CHROMIUM_VERSION} \
-    chromium-driver chromium-l10n chromium-sandbox
-
-# dev personalizations / try installing packages without rebuilding everything
-RUN apt-get update && apt-get install -y nano
+# Python requirements
+COPY perma_web/pyproject.toml perma_web/uv.lock /perma/perma_web/
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+RUN uv sync --frozen
+ENV PATH="/opt/venv/bin:$PATH"

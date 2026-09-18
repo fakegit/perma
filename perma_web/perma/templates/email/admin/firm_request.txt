@@ -1,3 +1,16 @@
-{{ email }}{% if first_name or last_name %} ({{ first_name }} {{ last_name }}){% endif %} has requested more information about creating a law firm account for {{ firm_name }}.
+A new account request from a law firm or other organization has been submitted, and is now awaiting review.
 
-This user {% if has_account %}has{% else %}does not have{% endif %} an account.
+Registrar name: {{ registrar.name }}
+Registrar email: {{ registrar.email }}
+Registrar website: {{ registrar.website }}
+
+Estimated number of seats: {{ usage_form.cleaned_data.estimated_number_of_seats }}
+Estimated number of new Perma Links created each month (across all users): {{ usage_form.cleaned_data.estimated_perma_links_per_month }}
+
+User name: {{ user_name }}
+User email: {{ user_email }}
+User would be an administrator on the account: {{ user_form.data.registrar_user_candidate | yesno }}
+
+This user {% if existing_user %}has{% else %}does not have{% endif %} an account.
+
+https://{{ host }}{{ confirmation_route }}

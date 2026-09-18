@@ -11,7 +11,7 @@
 @import "~compass-mixins/lib/compass/css3/opacity";
 
 
-$height-record-hed: 97px;
+$height-record-hed: 113px;
 $color-trans-white: rgba(254,254,254,.65);
 $color-yellow: #d0a60f;
 
@@ -25,6 +25,7 @@ a {
   &:link { color: inherit; }
   &:visited { color: inherit; }
   &:hover { color: inherit; }
+  &:focus { color: inherit; }
   &:active { color: inherit; }
 }
 
@@ -74,6 +75,12 @@ iframe.archive-iframe {
   text-align:auto;
   background:#ffffff;
   margin:0px auto;
+}
+
+iframe.interstitial {
+  border: 0;
+  display:block;
+  margin: 16px auto;
 }
 
 header {
@@ -158,7 +165,18 @@ header {
   }
 }
 
+.new-record-message {
+  @include respond-mobile {
+    margin-top: 230px;
+  }
+  @include respond-tablet {
+    margin-top: 195px;
+  }
+}
+
 .record-message-primary {
+  max-width: 80%;
+  margin: auto;
   font-size: 24px;
   font-weight: 300;
   line-height: 1.2;
@@ -251,7 +269,7 @@ header {
       a {
         color: $color-orange;
         text-decoration: underline;
-        &:hover {
+        &:hover, &:focus {
           color: $color-black;
         }
         &:active {
@@ -281,7 +299,7 @@ header {
     margin-top: 1px;
     margin-right: -11px;
 
-    &:hover {
+    &:hover, &:focus {
       background-color: $color-hover;
     }
     &:active {
@@ -324,7 +342,7 @@ header {
 .btn {
   background-color: transparent;
   border-radius: 0;
-  &:hover {
+  &:hover, &:focus {
     background-color: transparent;
     border-color: $color-white;
   }
@@ -399,7 +417,7 @@ header {
   color: $color-blue;
   border-color: $color-blue;
   background-color: transparent;
-  &:hover {
+  &:hover, &:focus {
     border-width: 3px;
     padding: 4px 8px;
   }
@@ -412,7 +430,7 @@ header {
   @include respond-tablet {
     padding: 7px 11px;
     border-radius: 10em;
-    &:hover {
+    &:hover, &:focus {
       border-width: 3px;
       padding: 6px 10px;
     }
@@ -439,7 +457,7 @@ header {
   span {
     vertical-align: middle;
   }
-  &:hover {
+  &:hover, &:focus {
     border: none;
     padding: 0;
     padding-left: $double;
@@ -465,7 +483,7 @@ header {
     span {
       display: inline;
     }
-    &:hover {
+    &:hover, &:focus {
       border: 3px solid $color-white;
       padding: 6px 10px;
     }
@@ -543,7 +561,7 @@ header .primary-segment {
     padding-left: $grid * 3;
   }
   .content {
-    padding: 12px 0;
+    padding: 12px 0 0 6px;
   }
 }
 
@@ -564,7 +582,7 @@ a.about {
   padding-bottom: 3px;
   border-bottom: 1px solid;
   font-weight: 200;
-  &:hover {
+  &:hover, &:focus {
     border-color: $color-hover;
   }
   &:active {
@@ -661,7 +679,7 @@ a.about {
       padding-bottom: 3px;
       border-bottom: 1px solid;
       display: inline-block;
-      &:hover {
+      &:hover, &:focus {
         border-color: $color-hover;
         text-decoration: none;
       }
@@ -732,7 +750,7 @@ a.about {
       background-position: -9px * 5;
     }
   }
-  &:hover {
+  &:hover, &:focus {
     background-color: white;
     color: $color-blue;
     span:after {
@@ -781,13 +799,13 @@ a.about {
     top: -1px;
     margin-left: $grid;
   }
-  &:hover {
+  &:hover, &:focus {
     background-color: $color-trans-lightgray;
   }
   &:active {
     border-color: $color-trans-gray;
   }
-  &:hover::after {
+  &:hover::after, &:focus::after {
   }
 }
 
@@ -799,7 +817,7 @@ a.about {
     transform: rotate(180deg);
     background-position: -17px * 0;
   }
-  &:hover {
+  &:hover, &:focus {
     color: $color-orange;
   }
   &:active {
@@ -824,6 +842,31 @@ li.dropdown {
     color: #333333;
     white-space: nowrap;
   }
+}
+
+.view-mode .btn-toggle {
+  border-radius: 0;
+  box-shadow: none;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0);
+  padding: 1px 6px 2px 6px;
+  margin-right: -1px;
+  &.active {
+    background-color: $color-white;
+    color: $color-blue;
+  }
+  &:hover, &:focus {
+    text-decoration: underline;
+  }
+  &:hover:not(.active), &:focus:not(.active) {
+    text-decoration: none;
+    border-color: $color-white;
+    color: $color-white;
+  }
+}
+
+.view-mode {
+  padding: 6px 0;
 }
 
 /*
@@ -1003,19 +1046,13 @@ li.dropdown {
 }
 
 .navbar-nav {
-  margin: 0 -$grid $double -$grid;
+  margin: 0 (-$grid) $double (-$grid);
   @include respond-tablet {
     margin: 0;
   }
 }
 
 // ui-tray
-
-%ui-tray-alignment {
-  padding-left: $grid * 5;
-  padding-right: $grid * 5;
-  margin: 0 -$double;
-}
 
 .ui-tray {
   z-index: 100;
@@ -1027,10 +1064,11 @@ li.dropdown {
   right: 0;
   margin-top: 0;
   border-top: none;
-  overflow: hidden;
+  overflow: auto;
   box-sizing: border-box;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.17);
   height: auto !important;
+  max-height: 75vh;
   display: none;
   @include respond-wide {
     left: 18%;
@@ -1082,7 +1120,7 @@ p.fp {
   padding-top: $grid * 3;
   a {
     text-decoration: underline;
-    &:hover {
+    &:hover, &:focus {
       color: $color-blue;
     }
   }
@@ -1202,7 +1240,7 @@ p.fp {
         margin-top: $half;
       }
     }
-    &:hover {
+    &:hover, &:focus {
       background-color: $color-hover;
       border-radius: 2px;
       .icon-bar {
@@ -1408,16 +1446,18 @@ body.modal-open {
     display: inline-block;
   }
 }
+
 .label-asterisk {
   font-size: 13px;
   margin-left: 3px;
   color: $color-orange;
 }
+
 #collapse-details {
   .tray-detail-title {
     margin-bottom: 5px;
   }
-  .temporary-options {
+  .temporary-options, .admin-only {
     background-color: $color-trans-whispergray;
   }
   input {
@@ -1427,12 +1467,22 @@ body.modal-open {
     }
   }
 
-  .save-status {
+  legend {
+    font-size: 14px;
+    border-bottom: none;
+  }
+
+  .save-status,
+  .title-save-status,
+  .notes-save-status,
+  .description-save-status,
+  .default_to_screenshot_view-save-status {
     color: $color-orange;
     margin-top: 0;
     margin-left: .7em;
     font-weight: 700;
   }
+
   .btn-file-upload-container {
     display: block;
     margin-left: 5px;
@@ -1446,10 +1496,10 @@ body.modal-open {
   }
   .btn-file-upload {
     background-color: $color-trans-lightgray;
-    &:hover {
+    &:hover, &:focus {
       background-color: $color-trans-darkgray;
     }
-    &:hover:disabled {
+    &:hover:disabled, &:focus:disabled {
       background-color: $color-trans-lightgray;
     }
   }
@@ -1457,10 +1507,10 @@ body.modal-open {
     background: $color-blue;
     color: white;
     border: 0px;
-    &:hover {
+    &:hover, &:focus {
       background-color: $color-hover;
     }
-    &:hover:disabled {
+    &:hover:disabled, &:focus:disabled {
       background-color: $color-blue;
     }
   }
@@ -1471,7 +1521,7 @@ body.modal-open {
   .btn-delete {
     background-color: $color-error;
     color: white;
-    &:hover {
+    &:hover, &:focus {
       background-color: black;
     }
   }
@@ -1503,6 +1553,93 @@ body.modal-open {
             margin:0px auto;
         }
     }
+}
 
+/* Fallback screen for old browsers */
+#no-playback,
+#playback-interstitial .hidden{
+  /* Prevent flashing: */
+  opacity: 0;
+  animation: no-playback-fade-in 0.5s ease-in-out;
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+@keyframes no-playback-fade-in {
+  0%    { opacity: 0; }
+  20%   { opacity: 0; }
+  80%   { opacity: 0.5; }
+  100%  { opacity: 1; }
+}
 
+iframe.background {
+  visibility: hidden;
+  height: 10px;
+  min-width: 10px;
+  width: 10px;
+}
+
+/* copy link button */
+
+.copy-icon-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin-left: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+  color: #666;
+  vertical-align: middle;
+}
+
+.copy-icon-btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.copy-icon-btn:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 1px;
+}
+
+.copy-icon-btn:active {
+  background-color: rgba(0, 0, 0, 0.15);
+  transform: scale(0.95);
+}
+
+.copy-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* Screen reader only text */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Success feedback animation */
+.copy-icon-btn.copied {
+  color: #28a745;
+}
+
+.copy-icon-btn.copied svg {
+  animation: copySuccess 0.3s ease;
+}
+
+@keyframes copySuccess {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
 }
